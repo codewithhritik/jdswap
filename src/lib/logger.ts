@@ -21,6 +21,12 @@ const SAFE_STRING_KEYS = new Set([
   "route",
   "component",
   "event",
+  "fit",
+  "priority",
+  "category",
+  "requiredterms",
+  "missingterms",
+  "term",
 ]);
 const BLOCKED_KEYS = new Set([
   "rawtext",

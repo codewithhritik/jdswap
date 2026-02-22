@@ -17,7 +17,7 @@ export const ExperienceEntrySchema = z.object({
     .array(BulletPointSchema)
     .min(1)
     .max(5)
-    .describe("1-5 bullet points per role, tuned to fit one-page output"),
+    .describe("1-5 bullet points per role."),
 });
 
 export const EducationEntrySchema = z.object({
@@ -119,13 +119,75 @@ export const TailorReviewSchema = z.object({
 
 export type TailorReview = z.infer<typeof TailorReviewSchema>;
 
+export const JdRequirementPrioritySchema = z.enum(["required", "preferred"]);
+export const JdRequirementCategorySchema = z.enum([
+  "language",
+  "framework",
+  "cloud",
+  "tool",
+  "database",
+  "methodology",
+  "domain",
+  "other",
+]);
+
+export const JdRequirementSchema = z.object({
+  term: z.string(),
+  priority: JdRequirementPrioritySchema,
+  category: JdRequirementCategorySchema,
+  exactPhrase: z.string(),
+});
+
+export type JdRequirement = z.infer<typeof JdRequirementSchema>;
+
+export const RoleFitLevelSchema = z.enum(["strong_fit", "medium_fit", "weak_fit"]);
+
+export const RoleFitAssignmentSchema = z.object({
+  requirement: JdRequirementSchema,
+  roleIndex: z.number().int().min(0),
+  fit: RoleFitLevelSchema,
+});
+
+export type RoleFitAssignment = z.infer<typeof RoleFitAssignmentSchema>;
+
+export const RoleValidationResultSchema = z.object({
+  roleIndex: z.number().int().min(0),
+  passed: z.boolean(),
+  missingRequirements: z.array(z.string()),
+  credibilityIssues: z.array(z.string()),
+  specificityIssues: z.array(z.string()),
+  coverageScore: z.number().min(0).max(100),
+  role0VisibilityScore: z.number().min(0).max(100),
+  credibilityScore: z.number().min(0).max(100),
+});
+
+export type RoleValidationResult = z.infer<typeof RoleValidationResultSchema>;
+
+export const TailorDiagnosticsSchema = z.object({
+  requiredTerms: z.array(z.string()),
+  coveredRequiredTerms: z.array(z.string()),
+  missingRequiredTerms: z.array(z.string()),
+  unsupportedClaims: z.array(z.string()),
+  roleResults: z.array(RoleValidationResultSchema),
+  jdCoverageScore: z.number().min(0).max(100),
+  role0VisibilityScore: z.number().min(0).max(100),
+  credibilityScore: z.number().min(0).max(100),
+});
+
+export type TailorDiagnostics = z.infer<typeof TailorDiagnosticsSchema>;
+
 export type ProgressStep =
   | "extracting"
   | "parsing"
   | "parsed"
+  | "requirements_extracted"
   | "tailoring"
+  | "tailoring_role"
   | "reviewing"
+  | "validating_role"
+  | "retrying_role"
   | "revising"
+  | "scoring"
   | "optimizing"
   | "complete";
 
@@ -137,6 +199,14 @@ export interface LoadingProgress {
   education?: number;
   projects?: number;
   keywords?: string[];
+  roleIndex?: number;
+  roleAttempt?: number;
+  rolesTotal?: number;
+  requiredTerms?: string[];
+  missingTerms?: string[];
+  coverageScore?: number;
+  credibilityScore?: number;
+  role0VisibilityScore?: number;
   reviewScore?: number;
   reviewApproved?: boolean;
 }

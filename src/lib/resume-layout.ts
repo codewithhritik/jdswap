@@ -15,8 +15,8 @@ export interface RenderSection {
 
 const KNOWN_SECTION_ORDER: SourceSectionKind[] = [
   "summary",
-  "skills",
   "experience",
+  "skills",
   "education",
   "projects",
 ];

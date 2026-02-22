@@ -7,12 +7,16 @@ interface DownloadBarProps {
   onDownloadPdf: () => Promise<void>;
   onDownloadDocx: () => Promise<void>;
   onReset: () => void;
+  exportsReady?: boolean;
+  statusText?: string | null;
 }
 
 export function DownloadBar({
   onDownloadPdf,
   onDownloadDocx,
   onReset,
+  exportsReady = true,
+  statusText,
 }: DownloadBarProps) {
   const [downloading, setDownloading] = useState<"pdf" | "docx" | null>(null);
 
@@ -48,10 +52,13 @@ export function DownloadBar({
           >
             Start Over
           </button>
+          {statusText ? (
+            <p className="text-xs text-warm-muted">{statusText}</p>
+          ) : null}
           <div className="flex-1" />
           <motion.button
             onClick={() => handleDownload("docx")}
-            disabled={downloading !== null}
+            disabled={downloading !== null || !exportsReady}
             className="px-5 py-2 text-sm font-medium bg-surface-hover hover:bg-surface-elevated disabled:opacity-50 text-warm rounded-lg transition-colors flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface border border-surface-border"
             whileHover={{ y: -1 }}
             whileTap={{ scale: 0.97 }}
@@ -66,8 +73,8 @@ export function DownloadBar({
           </motion.button>
           <motion.button
             onClick={() => handleDownload("pdf")}
-            disabled={downloading !== null}
-            className="px-5 py-2 text-sm font-semibold bg-gradient-to-r from-accent to-accent-hover disabled:opacity-50 text-white rounded-lg transition-all flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface shadow-lg shadow-accent/15"
+            disabled={downloading !== null || !exportsReady}
+            className="px-5 py-2 text-sm font-semibold bg-gradient-to-r from-accent to-accent-hover disabled:opacity-50 text-[rgb(var(--color-accent-contrast))] rounded-lg transition-all flex items-center gap-2 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-surface shadow-lg shadow-accent/15"
             whileHover={{ y: -1 }}
             whileTap={{ scale: 0.97 }}
             transition={{ type: "spring", stiffness: 400, damping: 25 }}

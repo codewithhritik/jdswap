@@ -26,6 +26,9 @@ A Next.js + TypeScript app for resume tailoring and export workflows.
 - `npm run start` - run production server from `.next-prod`
 - `npm run lint` - run Next.js lint checks
 - `npm run test:docx` - build and run DOCX export tests
+- `npm run test:pdf` - build and run PDF export tests
+- `npm run test:export-model` - run canonical export model contract tests
+- `npm run test:pdf-pipeline` - run PDF renderer and compaction pipeline unit tests
 
 ## Git Workflow
 

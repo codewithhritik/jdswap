@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import mammoth from "mammoth";
+import JSZip from "jszip";
 import { NextRequest } from "next/server.js";
 import { createRequire } from "node:module";
 
@@ -117,6 +118,17 @@ async function postJson(post, payload) {
   return post(req);
 }
 
+async function extractDocxArtifacts(res) {
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const [rawText, zip] = await Promise.all([
+    mammoth.extractRawText({ buffer }),
+    JSZip.loadAsync(buffer),
+  ]);
+  const documentXml = await zip.file("word/document.xml")?.async("string");
+  assert.ok(documentXml);
+  return { rawText: rawText.value, documentXml };
+}
+
 test("download route rejects legacy/invalid payload and accepts JSON contract", async () => {
   const post = getPostHandler();
 
@@ -134,6 +146,7 @@ test("download route rejects legacy/invalid payload and accepts JSON contract", 
     validRes.headers.get("content-type"),
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   );
+  assert.match(validRes.headers.get("x-export-revision") ?? "", /^[a-f0-9]{24}$/);
 });
 
 test("generated DOCX preserves education details and source-only custom section", async () => {
@@ -147,20 +160,143 @@ test("generated DOCX preserves education details and source-only custom section"
   assert.match(output.value, /ACHIEVEMENTS/i);
 });
 
-test("compaction trims long bullets before dropping skills", async () => {
+test("generated DOCX sanitizes null-like values and em dashes", async () => {
   const post = getPostHandler();
   const payload = buildBasePayload();
-  const longBullet =
-    "Built large-scale platform features across multiple services and workflows while improving reliability, observability, and performance for critical paths. ".repeat(
-      8
-    );
+  payload.resume.linkedin = "null";
+  payload.resume.github = "undefined";
+  payload.resume.experience[0].bullets[0].text =
+    "Built backend services — modernized orchestration and reduced latency by 35% for 120K users.";
+  payload.resume.education[0].gpa = "null";
+  payload.resume.education[0].honors = "N/A";
+
+  const res = await postJson(post, payload);
+  assert.equal(res.status, 200);
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const output = await mammoth.extractRawText({ buffer });
+  assert.doesNotMatch(output.value, /\bnull\b/i);
+  assert.doesNotMatch(output.value, /\bundefined\b/i);
+  assert.doesNotMatch(output.value, /—|–/);
+});
+
+test("generated DOCX renders skills in single column with bold labels", async () => {
+  const post = getPostHandler();
+  const payload = buildBasePayload();
+  const res = await postJson(post, payload);
+  assert.equal(res.status, 200);
+
+  const { rawText, documentXml } = await extractDocxArtifacts(res);
+  assert.doesNotMatch(documentXml, /<w:tabs><w:tab/);
+  assert.doesNotMatch(documentXml, /<w:tab\/>/);
+  assert.match(
+    documentXml,
+    /<w:rPr><w:b\/><w:sz w:val="21"\/><w:szCs w:val="21"\/><\/w:rPr><w:t xml:space="preserve">Languages:<\/w:t>/
+  );
+  assert.match(
+    documentXml,
+    /<w:rPr><w:b\/><w:sz w:val="21"\/><w:szCs w:val="21"\/><\/w:rPr><w:t xml:space="preserve">Frameworks:<\/w:t>/
+  );
+  assert.match(rawText, /Languages: Go, Python, TypeScript, JavaScript, Java, C\+\+/);
+  assert.match(rawText, /Frameworks: React, Redux, Node\.js, Next\.js, Spring Boot, Flask/);
+  assert.match(rawText, /Cloud\/AWS: ECS, DynamoDB, Lambda, SQS, EC2, S3, RDS/);
+  assert.match(rawText, /Tools: Docker, Kubernetes, Terraform, Kafka, CI\/CD, GitHub Actions/);
+});
+
+test("skills lines stay single-column even when long", async () => {
+  const post = getPostHandler();
+  const payload = buildBasePayload();
+  const longSkillLine =
+    "Cloud: AWS, Lambda, DynamoDB, Kubernetes, Terraform, Docker, GitHub Actions, Monitoring, Incident Response, Cost Optimization, SRE";
+  payload.resume.skills = [
+    "Languages: Go, Rust, TypeScript",
+    "Frameworks: React, Next.js, Node.js",
+    longSkillLine,
+    "Databases: PostgreSQL, MySQL, Redis",
+    "Tools: Git, Linux, CI/CD",
+  ];
+  payload.resume.projects = null;
+  payload.sourceLayout.sections = payload.sourceLayout.sections.filter(
+    (section) => section.kind !== "projects" && section.kind !== "custom"
+  );
+
+  const res = await postJson(post, payload);
+  assert.equal(res.status, 200);
+
+  const { rawText, documentXml } = await extractDocxArtifacts(res);
+  assert.doesNotMatch(documentXml, /<w:tab\/>/);
+  assert.doesNotMatch(documentXml, /<w:tabs><w:tab/);
+  assert.match(rawText, /Cloud: AWS, Lambda, DynamoDB, Kubernetes, Terraform, Docker/);
+  assert.match(rawText, /Tools: Git, Linux, CI\/CD/);
+});
+
+test("long skill sections are preserved in multi-page DOCX output", async () => {
+  const post = getPostHandler();
+  const payload = buildBasePayload();
+  const longSkills = [
+    "skill01",
+    "skill02",
+    "skill03",
+    "skill04",
+    "skill05",
+    "skill06",
+    "skill07",
+    "skill08",
+    "skill09",
+    "skill10",
+    "skill11",
+    "skill12",
+    "skill13",
+    "skill14",
+    "skill15",
+    "skill16",
+    "skill17",
+    "skill18",
+    "skill19",
+    "skill20",
+    "skill21",
+    "skill22",
+    "skill23",
+    "skill24",
+    "skill25",
+    "skill26",
+    "skill27",
+    "skill28",
+    "skill29",
+    "skill30",
+  ].join(", ");
+  const markerSkills = `${longSkills}, z-last-skill`;
 
   payload.resume.experience[0].bullets = [
-    { text: longBullet },
-    { text: longBullet },
-    { text: longBullet },
-    { text: longBullet },
-    { text: longBullet },
+    {
+      text: "Built a backend service using Go and Kafka to process partner events, reducing incident response time by 30% and improving operational reliability across critical workflows.",
+    },
+    {
+      text: "Developed a React dashboard with role-based access controls and alerting hooks, enabling faster triage and reducing average investigation time by 26% for support teams.",
+    },
+    {
+      text: "Implemented CI pipelines with targeted test stages and deployment checks, cutting failed releases by 35% while improving confidence in production rollouts.",
+    },
+    {
+      text: "Optimized database query patterns and indexing strategy for high-traffic APIs, lowering p95 latency by 41% and stabilizing throughput during peak load windows.",
+    },
+    {
+      text: "Integrated structured logging and service-level telemetry into core APIs, improving root-cause detection speed and reducing recurring incident volume by 22%.",
+    },
+  ];
+  payload.resume.skills = [
+    `Category1: ${longSkills}`,
+    `Category2: ${longSkills}`,
+    `Category3: ${longSkills}`,
+    `Category4: ${longSkills}`,
+    `Category5: ${longSkills}`,
+    `Category6: ${longSkills}`,
+    `Category7: ${longSkills}`,
+    `Category8: ${longSkills}`,
+    `Category9: ${longSkills}`,
+    `Category10: ${longSkills}`,
+    `Category11: ${longSkills}`,
+    `Category12: ${markerSkills}`,
   ];
   payload.resume.projects = null;
   payload.sourceLayout.sections = payload.sourceLayout.sections.filter(
@@ -174,28 +310,82 @@ test("compaction trims long bullets before dropping skills", async () => {
   const output = await mammoth.extractRawText({ buffer });
 
   const bulletCount = (output.value.match(/•/g) ?? []).length;
-  assert.ok(bulletCount < 5);
-  assert.match(output.value, /Frameworks: React, Redux, Node\.js, Next\.js, Spring Boot, Flask/);
+  assert.equal(bulletCount, 5);
+  assert.match(output.value, /z-last-skill/);
 });
 
-test("route returns 422 when one-page fit conflicts with preserved sections", async () => {
+test("long sections keep project and skill tail content in multi-page DOCX output", async () => {
   const post = getPostHandler();
   const payload = buildBasePayload();
-  const longLine =
-    "Preserved custom content line with substantial detail that should remain unchanged and consume layout budget. ".repeat(
-      20
-    );
-
-  payload.sourceLayout.sections.push({
-    kind: "custom",
-    heading: "PUBLICATIONS",
-    lines: [longLine, longLine, longLine, longLine, longLine, longLine, longLine],
-  });
-  payload.resume.experience[0].bullets = [{ text: longLine }];
-  payload.resume.projects = null;
+  const denseSkillTail = Array.from({ length: 120 }, (_, idx) => `skill${idx + 1}`).join(", ");
+  const longExperienceTail = "Delivered production migration and reliability improvements. ".repeat(20);
+  payload.resume.skills = [
+    "Languages: Go, Rust, TypeScript, Java, Python",
+    "Frameworks: React, Next.js, Node.js, Spring Boot",
+    "Cloud: AWS, EC2, S3, Lambda, EKS",
+    "Databases: PostgreSQL, MySQL, MongoDB, Redis, DynamoDB",
+    `Tools: Docker, Kubernetes, Terraform, Grafana, Jenkins, ${denseSkillTail}`,
+    `Methods: CI/CD, GraphQL, gRPC, Microservices, ${denseSkillTail}`,
+    `Other: Agile, Design Patterns, REST APIs, ${denseSkillTail}, z-project-preserve-tail`,
+  ];
+  payload.resume.experience[0].bullets = [
+    ...payload.resume.experience[0].bullets,
+    { text: longExperienceTail },
+  ];
+  payload.resume.projects = [
+    {
+      name: "Project Alpha",
+      technologies: "Next.js, Flask, PostgreSQL, AWS",
+      bullets: [
+        {
+          text: "Built a full-stack product analytics workflow integrating Next.js and Flask services with PostgreSQL storage, reducing report generation latency by 47% and improving stakeholder access to weekly KPIs.",
+        },
+      ],
+    },
+  ];
+  payload.sourceLayout.sections = payload.sourceLayout.sections.filter(
+    (section) => section.kind !== "custom"
+  );
 
   const res = await postJson(post, payload);
-  assert.equal(res.status, 422);
-  const body = await res.json();
-  assert.match(body.error, /Strict one-page fit conflicts/i);
+  assert.equal(res.status, 200);
+
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const output = await mammoth.extractRawText({ buffer });
+  assert.match(output.value, /PROJECT EXPERIENCE/i);
+  assert.match(output.value, /Project Alpha/);
+  assert.match(output.value, /z-project-preserve-tail/);
+});
+
+test("DOCX route keeps working when render-check is enabled", async () => {
+  const post = getPostHandler();
+  const previousRenderCheck = process.env.ONE_PAGE_RENDER_CHECK;
+  process.env.ONE_PAGE_RENDER_CHECK = "1";
+
+  try {
+    const res = await postJson(post, buildBasePayload());
+    assert.equal(res.status, 200);
+    assert.equal(
+      res.headers.get("content-type"),
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+    );
+  } finally {
+    if (previousRenderCheck === undefined) delete process.env.ONE_PAGE_RENDER_CHECK;
+    else process.env.ONE_PAGE_RENDER_CHECK = previousRenderCheck;
+  }
+});
+
+test("route allows long content and returns DOCX with revision header", async () => {
+  const post = getPostHandler();
+  const payload = buildBasePayload();
+  const longLine = "Critical production migration detail with measured outcomes. ".repeat(200);
+  payload.resume.experience[0].bullets = [{ text: longLine }];
+  payload.resume.projects = null;
+  payload.sourceLayout.sections = payload.sourceLayout.sections.filter(
+    (section) => section.kind === "experience" || section.kind === "skills" || section.kind === "education"
+  );
+
+  const res = await postJson(post, payload);
+  assert.equal(res.status, 200);
+  assert.match(res.headers.get("x-export-revision") ?? "", /^[a-f0-9]{24}$/);
 });

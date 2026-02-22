@@ -7,15 +7,19 @@ import {
   type SourceLayout,
   type TailoredResume,
 } from "@/lib/schema";
-import { compactResumeForOnePage } from "@/lib/one-page";
-import { generateCanonicalDocx } from "@/lib/docx-export";
+import { buildCompactedDocxBuffer } from "@/lib/export-pipeline";
+import { computeExportRevision } from "@/lib/export-revision";
 
 const DownloadDocxRequestSchema = z.object({
   resume: TailoredResumeSchema,
   sourceLayout: SourceLayoutSchema,
 });
 
-function buildDocxResponse(buffer: Buffer, requestId: string): Response {
+function buildDocxResponse(
+  buffer: Buffer,
+  requestId: string,
+  exportRevision: string
+): Response {
   return new Response(new Uint8Array(buffer), {
     headers: {
       "Content-Type":
@@ -23,6 +27,7 @@ function buildDocxResponse(buffer: Buffer, requestId: string): Response {
       "Content-Disposition": 'attachment; filename="tailored-resume.docx"',
       "Content-Length": String(buffer.length),
       "x-request-id": requestId,
+      "x-export-revision": exportRevision,
     },
   });
 }
@@ -58,43 +63,25 @@ export async function POST(request: NextRequest) {
       skillsCount: parsed.resume.skills.length,
       sectionsCount: parsed.sourceLayout.sections.length,
     });
-
-    const compaction = compactResumeForOnePage(parsed.resume, parsed.sourceLayout);
-    if (!compaction.fits) {
-      logger.warn("docx.compaction.failed", {
-        reason: "one_page_conflict",
-        estimatedLines: compaction.estimatedLines,
-        durationMs: Date.now() - requestStartedAt,
-      });
-
-      return NextResponse.json(
-        {
-          error:
-            compaction.reason ??
-            "Unable to fit the resume to one page while preserving all source sections.",
-          estimatedLines: compaction.estimatedLines,
-        },
-        { status: 422, headers: { "x-request-id": requestId } }
-      );
-    }
-
-    logger.info("docx.generate.start", {
-      estimatedLines: compaction.estimatedLines,
+    const exportRevision = computeExportRevision({
+      resume: parsed.resume,
+      sourceLayout: parsed.sourceLayout,
     });
-    const generateStartedAt = Date.now();
-    const buffer = await generateCanonicalDocx(
-      compaction.resume,
+
+    const { docxBuffer, estimatedLines } = await buildCompactedDocxBuffer(
+      parsed.resume,
       parsed.sourceLayout
     );
     logger.info("docx.generate.done", {
-      outputBytes: buffer.length,
-      durationMs: Date.now() - generateStartedAt,
+      estimatedLines,
+      outputBytes: docxBuffer.length,
+      exportRevision,
     });
     logger.info("docx.request.complete", {
       durationMs: Date.now() - requestStartedAt,
     });
 
-    return buildDocxResponse(buffer, requestId);
+    return buildDocxResponse(docxBuffer, requestId, exportRevision);
   } catch (error) {
     logger.error("docx.request.failed", {
       durationMs: Date.now() - requestStartedAt,

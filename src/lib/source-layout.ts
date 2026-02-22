@@ -4,6 +4,7 @@ import {
   type SourceLayout,
   type SourceSection,
   type SourceSectionKind,
+  type TailoredResume,
 } from "./schema";
 
 const HEADING_WITH_KEYWORD_RE =
@@ -120,18 +121,24 @@ function enrichEducationSection(
   };
 }
 
-function buildDefaultLayout(parsed: ParsedResume): SourceLayout {
+export function buildFallbackSourceLayoutFromResume(
+  resume: Pick<TailoredResume, "experience" | "skills" | "education" | "projects">
+): SourceLayout {
   const sections: SourceSection[] = [
     { kind: "experience", heading: "Experience", lines: [] },
     { kind: "skills", heading: "Skills", lines: [] },
     { kind: "education", heading: "Education", lines: [] },
   ];
 
-  if (parsed.projects && parsed.projects.length > 0) {
+  if (resume.projects && resume.projects.length > 0) {
     sections.push({ kind: "projects", heading: "Projects", lines: [] });
   }
 
   return SourceLayoutSchema.parse({ sections });
+}
+
+function buildDefaultLayout(parsed: ParsedResume): SourceLayout {
+  return buildFallbackSourceLayoutFromResume(parsed);
 }
 
 export function extractSourceLayout(

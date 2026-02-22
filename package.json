@@ -7,18 +7,24 @@
     "build": "NEXT_DIST_DIR=.next-prod next build",
     "start": "NEXT_DIST_DIR=.next-prod next start",
     "lint": "next lint",
-    "test:docx": "npm run build && node --test tests/docx-export.test.mjs"
+    "test:docx": "npm run build && node --test tests/docx-export.test.mjs",
+    "test:pdf": "npm run build && node --test tests/pdf-export.test.mjs",
+    "test:export-model": "node --test tests/export-model.test.mjs",
+    "test:pdf-pipeline": "node --experimental-strip-types --loader ./tests/ts-loader.mjs --test tests/pdf-renderer.test.mjs tests/pdf-export-pipeline.test.mjs"
   },
   "dependencies": {
     "@google/genai": "^1.0.0",
-    "@react-pdf/renderer": "^4.1.0",
     "@xmldom/xmldom": "^0.8.11",
+    "docx-preview": "^0.3.7",
     "jszip": "^3.10.1",
     "mammoth": "^1.11.0",
     "motion": "^12.34.3",
     "next": "^14.2.0",
+    "pdf-lib": "^1.17.1",
+    "pdfjs-dist": "^5.4.624",
     "react": "^18.3.0",
     "react-dom": "^18.3.0",
+    "react-pdf": "^10.4.0",
     "zod": "^3.23.0",
     "zod-to-json-schema": "^3.23.0"
   },

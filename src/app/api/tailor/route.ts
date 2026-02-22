@@ -171,8 +171,15 @@ export async function POST(request: NextRequest) {
         });
 
         send("progress", { step: "complete" });
-        send("result", { parsed, tailored: restoredTailored, sourceLayout });
+        send("result", {
+          parsed,
+          tailored: restoredTailored,
+          sourceLayout,
+        });
         logger.info("tailor.stream.complete", {
+          experienceCount: restoredTailored.experience.length,
+          projectCount: restoredTailored.projects?.length ?? 0,
+          skillsCount: restoredTailored.skills.length,
           durationMs: Date.now() - requestStartedAt,
         });
         controller.close();

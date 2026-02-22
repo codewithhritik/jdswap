@@ -3,36 +3,80 @@ import {
   TailoredResumeSchema,
   ParsedResumeSchema,
   TailorReviewSchema,
+  JdRequirementSchema,
+  RoleFitAssignmentSchema,
+  RoleValidationResultSchema,
+  TailorDiagnosticsSchema,
   type TailorReview,
   type TailoredResume,
   type ParsedResume,
   type LoadingProgress,
+  type JdRequirement,
+  type RoleFitAssignment,
+  type RoleValidationResult,
+  type TailorDiagnostics,
 } from "./schema";
 import {
   PARSE_SYSTEM_PROMPT,
-  TAILOR_SYSTEM_PROMPT,
   REVIEW_SYSTEM_PROMPT,
   buildParsePrompt,
-  buildTailorPrompt,
   buildReviewPrompt,
 } from "./prompt";
 import { normalizeSkillLines } from "./skills";
 import { createLogger, type Logger } from "./logger";
+import { isNullLike, sanitizeText } from "./text";
 
 const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY! });
 const TAILOR_MODEL = "gemini-2.5-pro";
 const REVIEW_MODEL = "gemini-2.5-flash";
 const PARSE_MODEL = "gemini-2.5-flash";
 
-function resolveLogger(logger?: Logger): Logger {
-  return logger ?? createLogger({ component: "gemini" });
-}
+const ACTION_VERBS = [
+  "architected",
+  "built",
+  "reduced",
+  "migrated",
+  "automated",
+  "shipped",
+  "designed",
+  "orchestrated",
+  "accelerated",
+  "streamlined",
+  "deployed",
+  "integrated",
+  "optimized",
+  "refactored",
+  "implemented",
+  "owned",
+  "debugged",
+  "scaled",
+  "developed",
+  "engineered",
+  "improved",
+];
 
-function compactSkills(skills: string[]): string[] {
-  const cleaned = normalizeSkillLines(skills);
-  if (cleaned.length <= 20) return cleaned;
-  return cleaned.slice(0, 20);
-}
+const WEAK_PATTERNS = [
+  "responsible for",
+  "helped to",
+  "worked on",
+  "assisted with",
+  "played a key role",
+];
+
+const IMPROBABLE_SCOPE_PATTERNS = [
+  /managed\s+\d{2,}\s+engineers?/i,
+  /set\s+company[- ]wide\s+strategy/i,
+  /single-handedly/i,
+  /global\s+transformation/i,
+];
+
+const IMPACT_PATTERNS = [
+  /\d+\s*%/,
+  /\$\s?\d+/,
+  /\b\d+\s*(ms|s|sec|secs|seconds|minutes|mins|hours|hrs)\b/i,
+  /\b\d+\s*(users?|mau|requests?\/s|req\/s|rps|services?|incidents?)\b/i,
+  /\bfrom\b.+\bto\b/i,
+];
 
 const STOPWORDS = new Set([
   "a",
@@ -74,10 +118,99 @@ const STOPWORDS = new Set([
   "strong",
 ]);
 
+const TECH_CATALOG: Array<{ term: string; category: JdRequirement["category"] }> = [
+  { term: "Java", category: "language" },
+  { term: "Python", category: "language" },
+  { term: "TypeScript", category: "language" },
+  { term: "JavaScript", category: "language" },
+  { term: "Go", category: "language" },
+  { term: "Rust", category: "language" },
+  { term: "C++", category: "language" },
+  { term: "C#", category: "language" },
+  { term: "Kotlin", category: "language" },
+  { term: "Ruby", category: "language" },
+  { term: "PHP", category: "language" },
+  { term: "React", category: "framework" },
+  { term: "Next.js", category: "framework" },
+  { term: "Angular", category: "framework" },
+  { term: "Vue", category: "framework" },
+  { term: "Spring", category: "framework" },
+  { term: "Spring Boot", category: "framework" },
+  { term: "Django", category: "framework" },
+  { term: "FastAPI", category: "framework" },
+  { term: "Node.js", category: "framework" },
+  { term: "Express", category: "framework" },
+  { term: "Kafka", category: "tool" },
+  { term: "RabbitMQ", category: "tool" },
+  { term: "Docker", category: "tool" },
+  { term: "Kubernetes", category: "tool" },
+  { term: "Helm", category: "tool" },
+  { term: "Terraform", category: "tool" },
+  { term: "Airflow", category: "tool" },
+  { term: "dbt", category: "tool" },
+  { term: "Datadog", category: "tool" },
+  { term: "Prometheus", category: "tool" },
+  { term: "Grafana", category: "tool" },
+  { term: "Jenkins", category: "tool" },
+  { term: "GitHub Actions", category: "tool" },
+  { term: "AWS", category: "cloud" },
+  { term: "GCP", category: "cloud" },
+  { term: "Azure", category: "cloud" },
+  { term: "EKS", category: "cloud" },
+  { term: "EC2", category: "cloud" },
+  { term: "S3", category: "cloud" },
+  { term: "Lambda", category: "cloud" },
+  { term: "PostgreSQL", category: "database" },
+  { term: "MySQL", category: "database" },
+  { term: "MongoDB", category: "database" },
+  { term: "Redis", category: "database" },
+  { term: "DynamoDB", category: "database" },
+  { term: "Snowflake", category: "database" },
+  { term: "BigQuery", category: "database" },
+  { term: "GraphQL", category: "methodology" },
+  { term: "gRPC", category: "methodology" },
+  { term: "REST", category: "methodology" },
+  { term: "CI/CD", category: "methodology" },
+  { term: "Microservices", category: "methodology" },
+  { term: "OAuth", category: "methodology" },
+  { term: "RBAC", category: "methodology" },
+  { term: "Agile", category: "methodology" },
+  { term: "Scrum", category: "methodology" },
+];
+
+const CATEGORY_LABELS: Record<JdRequirement["category"], string> = {
+  language: "Languages",
+  framework: "Frameworks",
+  cloud: "Cloud",
+  tool: "Tools",
+  database: "Databases",
+  methodology: "Methods",
+  domain: "Domain",
+  other: "Other",
+};
+
+function resolveLogger(logger?: Logger): Logger {
+  return logger ?? createLogger({ component: "gemini" });
+}
+
+function compactSkills(skills: string[]): string[] {
+  const cleaned = normalizeSkillLines(skills);
+  if (cleaned.length <= 20) return cleaned;
+  return cleaned.slice(0, 20);
+}
+
 function tokenize(text: string): string[] {
-  return (
-    text.toLowerCase().match(/[a-z0-9.+#-]+/g)?.filter((t) => t.length >= 2) ?? []
-  );
+  return text.toLowerCase().match(/[a-z0-9.+#-]+/g)?.filter((t) => t.length >= 2) ?? [];
+}
+
+function normalizeTerm(term: string): string {
+  return term.trim().toLowerCase();
+}
+
+function includesTerm(text: string, term: string): boolean {
+  const escaped = term.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`\\b${escaped}\\b`, "i");
+  return pattern.test(text);
 }
 
 function buildKeywordSets(jdText: string): {
@@ -146,19 +279,26 @@ function reorderBulletsByJdPriority(
   return { ...tailored, experience };
 }
 
-function clampForSinglePage(
-  parsed: ParsedResume,
-  tailored: TailoredResume
-): TailoredResume {
+function getMaxBulletsPerRole(numRoles: number): number {
+  return numRoles >= 4 ? 3 : numRoles === 3 ? 4 : 5;
+}
+
+function getMaxBulletsPerProject(numRoles: number): number {
+  return numRoles >= 4 ? 1 : 2;
+}
+
+function getTargetRoleBulletCount(parsed: ParsedResume, roleIndex: number): number {
+  const baselineCount = Math.max(parsed.experience[roleIndex]?.bullets.length ?? 1, 1);
+  const expandedCount = baselineCount === 1 ? 2 : baselineCount;
+  return Math.min(expandedCount, getMaxBulletsPerRole(parsed.experience.length));
+}
+
+function clampForSinglePage(parsed: ParsedResume, tailored: TailoredResume): TailoredResume {
   const numRoles = tailored.experience.length;
-  // Adaptive budget: more roles → fewer bullets per role to stay on one page
-  const maxBulletsPerRole = numRoles >= 4 ? 3 : numRoles === 3 ? 4 : 5;
-  // Reduce project budget when experience is dense
-  const maxBulletsPerProject = numRoles >= 4 ? 1 : 2;
+  const maxBulletsPerProject = getMaxBulletsPerProject(numRoles);
 
   const clampedExperience = tailored.experience.map((exp, i) => {
-    const baselineCount = parsed.experience[i]?.bullets.length ?? exp.bullets.length;
-    const maxCount = Math.min(Math.max(baselineCount, 1), maxBulletsPerRole);
+    const maxCount = getTargetRoleBulletCount(parsed, i);
     return {
       ...exp,
       bullets: exp.bullets.slice(0, maxCount),
@@ -185,15 +325,12 @@ function clampForSinglePage(
   };
 }
 
-// Hand-built Gemini-compatible schema (OpenAPI 3.0 subset).
-// zodToJsonSchema produces $ref, additionalProperties, minItems etc. that Gemini rejects.
 const bulletPointSchema = {
   type: Type.OBJECT,
   properties: {
     text: {
       type: Type.STRING,
-      description:
-        "A single resume bullet point. Must be 160–220 characters. Bullets under 130 characters are too short.",
+      description: "A single resume bullet point.",
     },
   },
   required: ["text"],
@@ -322,106 +459,614 @@ const reviewResponseSchema = {
   ],
 } as const;
 
-// Step 1 — faithful extraction (deterministic, low temperature)
-export async function parseResume(rawText: string, logger?: Logger): Promise<ParsedResume> {
-  const activeLogger = resolveLogger(logger).child({ component: "gemini_parse" });
-  const startedAt = Date.now();
-  activeLogger.info("gemini.parse.start", {
-    model: PARSE_MODEL,
-    inputLength: rawText.length,
-  });
+const roleTailorResponseSchema = {
+  type: Type.OBJECT,
+  properties: {
+    bullets: {
+      type: Type.ARRAY,
+      items: bulletPointSchema,
+      description: "Rewritten bullets for this role",
+    },
+  },
+  required: ["bullets"],
+} as const;
 
-  try {
-    const response = await ai.models.generateContent({
-      model: PARSE_MODEL,
-      contents: buildParsePrompt(rawText),
-      config: {
-        systemInstruction: PARSE_SYSTEM_PROMPT,
-        responseMimeType: "application/json",
-        responseSchema: resumeResponseSchema,
-        temperature: 0.1,
-        maxOutputTokens: 8192,
-      },
-    });
-
-    const text = response.text;
-    if (!text) {
-      throw new Error("Gemini returned an empty response during parse step");
-    }
-
-    const parsed = ParsedResumeSchema.parse(JSON.parse(text));
-    activeLogger.info("gemini.parse.done", {
-      model: PARSE_MODEL,
-      durationMs: Date.now() - startedAt,
-      roles: parsed.experience.length,
-      skillsCount: parsed.skills.length,
-      educationCount: parsed.education.length,
-      projectsCount: parsed.projects?.length ?? 0,
-    });
-    return parsed;
-  } catch (error) {
-    activeLogger.error("gemini.parse.failed", {
-      model: PARSE_MODEL,
-      durationMs: Date.now() - startedAt,
-      err: error,
-    });
-    throw error;
+function parsePriorityFromLine(line: string): JdRequirement["priority"] {
+  const lowered = line.toLowerCase();
+  if (lowered.includes("must") || lowered.includes("required") || lowered.includes("need")) {
+    return "required";
   }
+  return "preferred";
 }
 
-// Step 2 — creative rewriting (structured JSON in → structured JSON out)
-async function generateTailoredResume(
-  parsed: ParsedResume,
-  jdText: string,
-  reviewerFeedback?: string,
-  logger?: Logger
-): Promise<TailoredResume> {
-  const activeLogger = resolveLogger(logger).child({ component: "gemini_tailor_generate" });
-  const startedAt = Date.now();
-  activeLogger.info("gemini.tailor.generate.start", {
-    model: TAILOR_MODEL,
-    hasReviewerFeedback: Boolean(reviewerFeedback),
-    roles: parsed.experience.length,
-    jdLength: jdText.length,
+export function extractJdRequirements(jdText: string): JdRequirement[] {
+  const normalizedCatalog = TECH_CATALOG.map((item) => ({
+    ...item,
+    normalized: normalizeTerm(item.term),
+  }));
+  const lines = jdText
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const found = new Map<string, JdRequirement>();
+
+  for (const line of lines) {
+    for (const item of normalizedCatalog) {
+      if (!includesTerm(line, item.term)) continue;
+      const key = item.normalized;
+      const existing = found.get(key);
+      const next: JdRequirement = {
+        term: item.term,
+        exactPhrase: item.term,
+        category: item.category,
+        priority: parsePriorityFromLine(line),
+      };
+      if (!existing || (existing.priority === "preferred" && next.priority === "required")) {
+        found.set(key, next);
+      }
+    }
+  }
+
+  if (found.size === 0) {
+    for (const token of tokenize(jdText)) {
+      if (STOPWORDS.has(token)) continue;
+      if (token.length < 3) continue;
+      const normalized = normalizeTerm(token);
+      if (found.has(normalized)) continue;
+      found.set(normalized, {
+        term: token,
+        exactPhrase: token,
+        category: "other",
+        priority: "required",
+      });
+      if (found.size >= 15) break;
+    }
+  }
+
+  const requirements = Array.from(found.values()).sort((a, b) => {
+    if (a.priority !== b.priority) return a.priority === "required" ? -1 : 1;
+    return a.term.localeCompare(b.term);
   });
 
-  try {
+  return JdRequirementSchema.array().parse(requirements).slice(0, 24);
+}
+
+function rankRoleForRequirement(parsed: ParsedResume, requirement: JdRequirement, roleIndex: number): number {
+  const role = parsed.experience[roleIndex];
+  if (!role) return 0;
+
+  const roleText = `${role.title} ${role.company} ${role.location} ${role.bullets
+    .map((b) => b.text)
+    .join(" ")}`.toLowerCase();
+  const term = requirement.term.toLowerCase();
+
+  let score = 0;
+  if (roleText.includes(term)) score += 7;
+
+  const termTokens = tokenize(term).filter((token) => !STOPWORDS.has(token));
+  for (const token of termTokens) {
+    if (roleText.includes(token)) score += 2;
+  }
+
+  const title = role.title.toLowerCase();
+  if (requirement.category === "language" && /(backend|software|engineer|developer)/.test(title)) {
+    score += 2;
+  }
+  if (requirement.category === "framework" && /(frontend|full stack|engineer|developer)/.test(title)) {
+    score += 2;
+  }
+  if (requirement.category === "cloud" && /(platform|backend|devops|site reliability|engineer)/.test(title)) {
+    score += 2;
+  }
+
+  if (roleIndex === 0) score += 1;
+
+  return score;
+}
+
+export function assignRoleFits(
+  parsed: ParsedResume,
+  requirements: JdRequirement[]
+): RoleFitAssignment[] {
+  const assignments: RoleFitAssignment[] = [];
+
+  for (const requirement of requirements) {
+    let bestRoleIndex = 0;
+    let bestScore = Number.NEGATIVE_INFINITY;
+
+    for (let i = 0; i < parsed.experience.length; i += 1) {
+      const score = rankRoleForRequirement(parsed, requirement, i);
+      if (score > bestScore) {
+        bestScore = score;
+        bestRoleIndex = i;
+      }
+    }
+
+    const fit: RoleFitAssignment["fit"] =
+      bestScore >= 8 ? "strong_fit" : bestScore >= 4 ? "medium_fit" : "weak_fit";
+
+    assignments.push({
+      requirement,
+      roleIndex: bestRoleIndex,
+      fit,
+    });
+  }
+
+  return RoleFitAssignmentSchema.array().parse(assignments);
+}
+
+function requirementsForRole(
+  roleIndex: number,
+  assignments: RoleFitAssignment[]
+): RoleFitAssignment[] {
+  return assignments
+    .filter((assignment) => assignment.roleIndex === roleIndex)
+    .sort((a, b) => {
+      if (a.requirement.priority !== b.requirement.priority) {
+        return a.requirement.priority === "required" ? -1 : 1;
+      }
+      if (a.fit !== b.fit) {
+        const weight = { strong_fit: 3, medium_fit: 2, weak_fit: 1 } as const;
+        return weight[b.fit] - weight[a.fit];
+      }
+      return a.requirement.term.localeCompare(b.requirement.term);
+    });
+}
+
+function getRoleBulletBounds(roleIndex: number): { min: number; max: number } {
+  void roleIndex;
+  return { min: 190, max: 240 };
+}
+
+function sanitizeBulletText(text: string): string {
+  return sanitizeText(text).replace(/[•]/g, "");
+}
+
+function hasImpactSignal(text: string): boolean {
+  return IMPACT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+function extractRoleTechHints(role: ParsedResume["experience"][number]): string[] {
+  const joined = `${role.title} ${role.bullets.map((bullet) => bullet.text).join(" ")}`;
+  const found: string[] = [];
+
+  for (const item of TECH_CATALOG) {
+    if (!includesTerm(joined, item.term)) continue;
+    if (!found.includes(item.term)) found.push(item.term);
+  }
+
+  return found.slice(0, 8);
+}
+
+function capTermsByPriority(
+  roleAssignments: RoleFitAssignment[],
+  priority: JdRequirement["priority"],
+  maxCount: number
+): string[] {
+  return roleAssignments
+    .filter((assignment) => assignment.requirement.priority === priority)
+    .slice(0, maxCount)
+    .map((assignment) => assignment.requirement.term);
+}
+
+function buildRoleTailorPrompt(args: {
+  parsed: ParsedResume;
+  roleIndex: number;
+  jdText: string;
+  assignments: RoleFitAssignment[];
+  targetBulletCount: number;
+  previousFeedback?: string;
+}): string {
+  const role = args.parsed.experience[args.roleIndex];
+  const bounds = getRoleBulletBounds(args.roleIndex);
+  const roleAssignments = requirementsForRole(args.roleIndex, args.assignments);
+  const requiredTerms = capTermsByPriority(roleAssignments, "required", 3);
+  const preferredTerms = capTermsByPriority(roleAssignments, "preferred", 2);
+  const originalRoleTech = extractRoleTechHints(role);
+
+  const feedbackSection = args.previousFeedback
+    ? `\n## RETRY FEEDBACK\n${args.previousFeedback}\n`
+    : "";
+
+  return `You are rewriting bullets for a single resume experience entry.
+
+## ROLE TO REWRITE (immutable fields must stay unchanged)
+${JSON.stringify(role, null, 2)}
+
+## TARGET JOB DESCRIPTION
+${args.jdText}
+
+## REQUIREMENT ALLOCATION FOR THIS ROLE
+Required terms to include naturally in bullets: ${requiredTerms.join(", ") || "None"}
+Preferred terms to include when natural: ${preferredTerms.join(", ") || "None"}
+Original technologies to preserve context: ${originalRoleTech.join(", ") || "None listed"}
+Target bullet count: ${args.targetBulletCount}
+
+## CONTROLLED FABRICATION POLICY
+- You MAY inject missing JD technologies when source evidence is sparse.
+- Keep claims believable for this title and role seniority.
+- Use moderate metrics and realistic scope.
+- Never create implausible ownership (for example: company-wide strategy, managing large orgs).
+
+## HARD RULES
+1. Return exactly ${args.targetBulletCount} bullets.
+2. Keep each bullet at ${bounds.min}-${bounds.max} chars.
+3. Every bullet must include: action + concrete implementation detail + impact.
+4. Use max 2 technologies in one bullet.
+5. For role index 0, first bullet must include at least one required term when required terms exist.
+6. Avoid filler phrases: responsible for, helped to, worked on, assisted with.
+7. Never use em dash or en dash characters. Use hyphen-minus (-) or commas instead.
+8. Do not force one JD technology into every bullet. Any single required term should appear in at most 2 bullets for this role.
+9. Preserve role authenticity: keep at least half of bullets anchored to original role context/outcomes, not pure stack swapping.
+10. Prioritize impact over tool-listing. Metrics and outcome should be the strongest signal in each bullet.
+11. Output JSON only using schema {"bullets": [{"text": "..."}]}.${feedbackSection}
+`;
+}
+
+function countTechMentions(text: string): number {
+  let count = 0;
+  for (const item of TECH_CATALOG) {
+    if (includesTerm(text, item.term)) count += 1;
+  }
+  return count;
+}
+
+export function validateRoleOutput(args: {
+  roleIndex: number;
+  role: ParsedResume["experience"][number];
+  bullets: Array<{ text: string }>;
+  assignments: RoleFitAssignment[];
+  expectedBulletCount: number;
+}): RoleValidationResult {
+  const bounds = getRoleBulletBounds(args.roleIndex);
+  const roleAssignments = requirementsForRole(args.roleIndex, args.assignments);
+  const requiredTerms = capTermsByPriority(roleAssignments, "required", 3);
+
+  const texts = args.bullets.map((b) => String(b.text ?? ""));
+  const allText = texts.join("\n").toLowerCase();
+  const originalRoleTech = extractRoleTechHints(args.role);
+  const minAnchoredBullets = Math.max(1, Math.ceil(texts.length / 2));
+
+  const missingRequirements = requiredTerms.filter((term) => !includesTerm(allText, term));
+
+  const specificityIssues: string[] = [];
+  const credibilityIssues: string[] = [];
+
+  if (texts.length !== args.expectedBulletCount) {
+    specificityIssues.push(
+      `Bullet count mismatch (${texts.length}, expected ${args.expectedBulletCount}).`
+    );
+  }
+
+  for (const text of texts) {
+    const lowered = text.toLowerCase();
+
+    if (text.length < bounds.min || text.length > bounds.max) {
+      specificityIssues.push(
+        `Bullet length out of range (${text.length}, expected ${bounds.min}-${bounds.max}): ${text.slice(0, 70)}...`
+      );
+    }
+
+    if (/[–—]/.test(text)) {
+      specificityIssues.push(`Bullet uses em/en dash: ${text.slice(0, 70)}...`);
+    }
+
+    const hasActionVerb = ACTION_VERBS.some((verb) => lowered.includes(verb));
+    if (!hasActionVerb) {
+      specificityIssues.push(`Bullet lacks a clear action verb: ${text.slice(0, 70)}...`);
+    }
+
+    if (!hasImpactSignal(text)) {
+      specificityIssues.push(`Bullet lacks quantified impact: ${text.slice(0, 70)}...`);
+    }
+
+    if (countTechMentions(text) > 2) {
+      specificityIssues.push(`Bullet appears keyword-heavy: ${text.slice(0, 70)}...`);
+    }
+
+    if (WEAK_PATTERNS.some((p) => lowered.includes(p))) {
+      specificityIssues.push(`Bullet uses weak phrasing: ${text.slice(0, 70)}...`);
+    }
+
+    if (IMPROBABLE_SCOPE_PATTERNS.some((pattern) => pattern.test(text))) {
+      credibilityIssues.push(`Bullet has implausible scope: ${text.slice(0, 70)}...`);
+    }
+  }
+
+  for (const term of requiredTerms) {
+    const bulletsWithTerm = texts.filter((text) => includesTerm(text, term)).length;
+    if (bulletsWithTerm > 2) {
+      specificityIssues.push(
+        `Technology overused across bullets (${term} appears ${bulletsWithTerm} times).`
+      );
+    }
+  }
+
+  if (originalRoleTech.length > 0) {
+    let anchoredBullets = 0;
+    for (const text of texts) {
+      if (originalRoleTech.some((term) => includesTerm(text, term))) {
+        anchoredBullets += 1;
+      }
+    }
+    if (anchoredBullets < minAnchoredBullets) {
+      credibilityIssues.push(
+        `Too many bullets drift from original role context (${anchoredBullets}/${texts.length} anchored).`
+      );
+    }
+  }
+
+  const firstBullet = texts[0] ?? "";
+  const firstBulletHasRequired = requiredTerms.length
+    ? requiredTerms.some((term) => includesTerm(firstBullet, term))
+    : true;
+
+  const coverageScore = requiredTerms.length
+    ? Math.round(((requiredTerms.length - missingRequirements.length) / requiredTerms.length) * 100)
+    : 100;
+  const role0VisibilityScore =
+    args.roleIndex === 0 ? (firstBulletHasRequired ? 100 : 30) : firstBulletHasRequired ? 100 : 60;
+
+  const issueCount = credibilityIssues.length + specificityIssues.length;
+  const credibilityScore = Math.max(0, 100 - issueCount * 12);
+
+  const passed = missingRequirements.length === 0 && credibilityIssues.length === 0 && specificityIssues.length <= 2;
+
+  return RoleValidationResultSchema.parse({
+    roleIndex: args.roleIndex,
+    passed,
+    missingRequirements,
+    credibilityIssues,
+    specificityIssues,
+    coverageScore,
+    role0VisibilityScore,
+    credibilityScore,
+  });
+}
+
+export async function tailorRole(args: {
+  parsed: ParsedResume;
+  jdText: string;
+  roleIndex: number;
+  assignments: RoleFitAssignment[];
+  logger?: Logger;
+  onProgress?: TailorProgressCallback;
+}): Promise<{ bullets: Array<{ text: string }>; validation: RoleValidationResult }> {
+  const activeLogger = resolveLogger(args.logger).child({ component: "gemini_tailor_role" });
+  const maxAttempts = args.roleIndex === 0 ? 3 : 2;
+  const expectedBulletCount = getTargetRoleBulletCount(args.parsed, args.roleIndex);
+
+  let bestBullets =
+    args.parsed.experience[args.roleIndex]?.bullets.map((bullet) => ({
+      text: sanitizeBulletText(bullet.text),
+    })) ?? [];
+  let bestValidation = validateRoleOutput({
+    roleIndex: args.roleIndex,
+    role: args.parsed.experience[args.roleIndex]!,
+    bullets: bestBullets,
+    assignments: args.assignments,
+    expectedBulletCount,
+  });
+  let retryFeedback: string | undefined;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    args.onProgress?.({
+      step: "tailoring_role",
+      roleIndex: args.roleIndex,
+      roleAttempt: attempt,
+      rolesTotal: args.parsed.experience.length,
+    });
+
     const response = await ai.models.generateContent({
       model: TAILOR_MODEL,
-      contents: buildTailorPrompt(parsed, jdText, reviewerFeedback),
+      contents: buildRoleTailorPrompt({
+        parsed: args.parsed,
+        roleIndex: args.roleIndex,
+        jdText: args.jdText,
+        assignments: args.assignments,
+        targetBulletCount: expectedBulletCount,
+        previousFeedback: retryFeedback,
+      }),
       config: {
-        systemInstruction: TAILOR_SYSTEM_PROMPT,
         responseMimeType: "application/json",
-        responseSchema: resumeResponseSchema,
-        temperature: 0.75,
+        responseSchema: roleTailorResponseSchema,
+        temperature: attempt === 1 ? 0.75 : 0.55,
         topP: 0.9,
-        maxOutputTokens: 16384,
+        maxOutputTokens: 4096,
       },
     });
 
     const text = response.text;
     if (!text) {
-      throw new Error("Gemini returned an empty response during tailor step");
+      throw new Error(`Gemini returned empty role tailoring response for role ${args.roleIndex}`);
     }
-    const tailored = TailoredResumeSchema.parse(JSON.parse(text));
-    activeLogger.info("gemini.tailor.generate.done", {
-      model: TAILOR_MODEL,
-      hasReviewerFeedback: Boolean(reviewerFeedback),
-      durationMs: Date.now() - startedAt,
-      experienceCount: tailored.experience.length,
-      projectCount: tailored.projects?.length ?? 0,
-      skillsCount: tailored.skills.length,
+
+    const parsedResponse = JSON.parse(text) as { bullets: Array<{ text: string }> };
+    const rawBullets = (parsedResponse.bullets ?? []).map((bullet) => ({
+      text: String(bullet.text ?? ""),
+    }));
+    const bullets = rawBullets.map((bullet) => ({
+      text: sanitizeBulletText(bullet.text),
+    }));
+
+    args.onProgress?.({ step: "validating_role", roleIndex: args.roleIndex, roleAttempt: attempt });
+    const validation = validateRoleOutput({
+      roleIndex: args.roleIndex,
+      role: args.parsed.experience[args.roleIndex]!,
+      bullets: rawBullets,
+      assignments: args.assignments,
+      expectedBulletCount,
     });
-    return tailored;
-  } catch (error) {
-    activeLogger.error("gemini.tailor.generate.failed", {
-      model: TAILOR_MODEL,
-      hasReviewerFeedback: Boolean(reviewerFeedback),
-      durationMs: Date.now() - startedAt,
-      err: error,
+
+    activeLogger.info("gemini.tailor.role.validation", {
+      roleIndex: args.roleIndex,
+      roleAttempt: attempt,
+      coverageScore: validation.coverageScore,
+      credibilityScore: validation.credibilityScore,
+      missingTerms: validation.missingRequirements,
+      credibilityIssueCount: validation.credibilityIssues.length,
+      specificityIssueCount: validation.specificityIssues.length,
+      expectedBulletCount,
+      actualBulletCount: bullets.length,
     });
-    throw error;
+
+    const currentScore = validation.coverageScore * 0.5 + validation.role0VisibilityScore * 0.3 + validation.credibilityScore * 0.2;
+    const bestScore = bestValidation.coverageScore * 0.5 + bestValidation.role0VisibilityScore * 0.3 + bestValidation.credibilityScore * 0.2;
+
+    if (currentScore >= bestScore) {
+      bestBullets = bullets;
+      bestValidation = validation;
+    }
+
+    if (validation.passed) {
+      return { bullets, validation };
+    }
+
+    if (attempt < maxAttempts) {
+      args.onProgress?.({
+        step: "retrying_role",
+        roleIndex: args.roleIndex,
+        roleAttempt: attempt + 1,
+        missingTerms: validation.missingRequirements,
+      });
+      retryFeedback = [
+        validation.missingRequirements.length
+          ? `Missing required terms: ${validation.missingRequirements.join(", ")}`
+          : "No missing required terms.",
+        validation.credibilityIssues.length
+          ? `Credibility issues: ${validation.credibilityIssues.join(" | ")}`
+          : "No credibility issues.",
+        validation.specificityIssues.length
+          ? `Specificity issues: ${validation.specificityIssues.join(" | ")}`
+          : "No specificity issues.",
+        "Keep tech coverage high while making claims realistic and role-aligned.",
+        "Do not overuse one technology across all bullets; emphasize impact and outcomes first.",
+      ].join("\n");
+    }
   }
+
+  return { bullets: bestBullets, validation: bestValidation };
+}
+
+function generateSkillsPass(
+  originalSkills: string[],
+  requirements: JdRequirement[],
+  tailoredExperience: TailoredResume["experience"]
+): string[] {
+  const normalizedOriginal = normalizeSkillLines(originalSkills);
+  const skillSet = new Map<string, string>();
+
+  for (const skill of normalizedOriginal) {
+    const cleaned = sanitizeText(skill);
+    if (isNullLike(cleaned)) continue;
+    skillSet.set(normalizeTerm(cleaned), cleaned);
+  }
+
+  const experienceText = tailoredExperience
+    .map((role) => role.bullets.map((b) => b.text).join(" "))
+    .join(" ");
+
+  for (const req of requirements) {
+    if (req.priority !== "required") continue;
+    if (includesTerm(experienceText, req.term) || req.category !== "other") {
+      const cleaned = sanitizeText(req.term);
+      if (!isNullLike(cleaned)) {
+        skillSet.set(normalizeTerm(cleaned), cleaned);
+      }
+    }
+  }
+
+  for (const req of requirements) {
+    if (req.priority === "preferred") {
+      const cleaned = sanitizeText(req.term);
+      if (!isNullLike(cleaned)) {
+        skillSet.set(normalizeTerm(cleaned), cleaned);
+      }
+    }
+  }
+
+  const grouped = new Map<string, string[]>();
+
+  for (const skill of Array.from(skillSet.values())) {
+    const catalogMatch = TECH_CATALOG.find((item) => normalizeTerm(item.term) === normalizeTerm(skill));
+    const reqMatch = requirements.find((item) => normalizeTerm(item.term) === normalizeTerm(skill));
+    const category = reqMatch?.category ?? catalogMatch?.category ?? "other";
+    const label = CATEGORY_LABELS[category];
+    if (!grouped.has(label)) grouped.set(label, []);
+    grouped.get(label)!.push(skill);
+  }
+
+  const orderedLabels = [
+    "Languages",
+    "Frameworks",
+    "Cloud",
+    "Databases",
+    "Tools",
+    "Methods",
+    "Domain",
+    "Other",
+  ];
+
+  const lines: string[] = [];
+  for (const label of orderedLabels) {
+    const items = grouped.get(label);
+    if (!items?.length) continue;
+
+    const uniqueSorted = Array.from(new Set(items)).sort((a, b) => {
+      const aReq = requirements.find((req) => normalizeTerm(req.term) === normalizeTerm(a));
+      const bReq = requirements.find((req) => normalizeTerm(req.term) === normalizeTerm(b));
+      if (aReq && !bReq) return -1;
+      if (!aReq && bReq) return 1;
+      if (aReq && bReq && aReq.priority !== bReq.priority) {
+        return aReq.priority === "required" ? -1 : 1;
+      }
+      return a.localeCompare(b);
+    });
+
+    lines.push(sanitizeText(`${label}: ${uniqueSorted.join(", ")}`));
+  }
+
+  return compactSkills(lines);
+}
+
+function computeDiagnostics(
+  requirements: JdRequirement[],
+  roleResults: RoleValidationResult[],
+  tailored: TailoredResume
+): TailorDiagnostics {
+  const requiredTerms = requirements
+    .filter((req) => req.priority === "required")
+    .map((req) => req.term);
+  const allText = tailored.experience.map((exp) => exp.bullets.map((b) => b.text).join(" ")).join(" ");
+
+  const coveredRequiredTerms = requiredTerms.filter((term) => includesTerm(allText, term));
+  const missingRequiredTerms = requiredTerms.filter((term) => !includesTerm(allText, term));
+
+  const unsupportedClaims: string[] = [];
+  for (const result of roleResults) {
+    unsupportedClaims.push(...result.credibilityIssues);
+  }
+
+  const jdCoverageScore = requiredTerms.length
+    ? Math.round((coveredRequiredTerms.length / requiredTerms.length) * 100)
+    : 100;
+
+  const role0VisibilityScore = roleResults.find((result) => result.roleIndex === 0)?.role0VisibilityScore ?? 100;
+  const credibilityScore = roleResults.length
+    ? Math.round(roleResults.reduce((sum, result) => sum + result.credibilityScore, 0) / roleResults.length)
+    : 100;
+
+  return TailorDiagnosticsSchema.parse({
+    requiredTerms,
+    coveredRequiredTerms,
+    missingRequiredTerms,
+    unsupportedClaims,
+    roleResults,
+    jdCoverageScore,
+    role0VisibilityScore,
+    credibilityScore,
+  });
 }
 
 async function reviewTailoredResume(
@@ -479,26 +1124,172 @@ async function reviewTailoredResume(
   }
 }
 
-function buildFeedbackForRevision(review: TailorReview): string {
-  const missing = review.missingRequirements.length
-    ? `Missing JD requirements: ${review.missingRequirements.join(", ")}.`
-    : "No explicit missing requirements listed.";
-  const topBullet = review.topBulletIssues.length
-    ? `Top bullet issues: ${review.topBulletIssues.join(" | ")}.`
-    : "No top bullet issues listed.";
-  return `${review.feedback}\n${missing}\n${topBullet}\nRaise relevance of first bullet for each role.`;
-}
-
-function postProcessTailored(
-  parsed: ParsedResume,
-  tailored: TailoredResume,
-  jdText: string
-): TailoredResume {
+function postProcessTailored(parsed: ParsedResume, tailored: TailoredResume, jdText: string): TailoredResume {
   const ranked = reorderBulletsByJdPriority(tailored, jdText);
   return TailoredResumeSchema.parse(clampForSinglePage(parsed, ranked));
 }
 
 export type TailorProgressCallback = (progress: Partial<LoadingProgress>) => void;
+
+// Step 1 — faithful extraction (deterministic, low temperature)
+export async function parseResume(rawText: string, logger?: Logger): Promise<ParsedResume> {
+  const activeLogger = resolveLogger(logger).child({ component: "gemini_parse" });
+  const startedAt = Date.now();
+  activeLogger.info("gemini.parse.start", {
+    model: PARSE_MODEL,
+    inputLength: rawText.length,
+  });
+
+  try {
+    const response = await ai.models.generateContent({
+      model: PARSE_MODEL,
+      contents: buildParsePrompt(rawText),
+      config: {
+        systemInstruction: PARSE_SYSTEM_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema: resumeResponseSchema,
+        temperature: 0.1,
+        maxOutputTokens: 8192,
+      },
+    });
+
+    const text = response.text;
+    if (!text) {
+      throw new Error("Gemini returned an empty response during parse step");
+    }
+
+    const parsed = ParsedResumeSchema.parse(JSON.parse(text));
+    activeLogger.info("gemini.parse.done", {
+      model: PARSE_MODEL,
+      durationMs: Date.now() - startedAt,
+      roles: parsed.experience.length,
+      skillsCount: parsed.skills.length,
+      educationCount: parsed.education.length,
+      projectsCount: parsed.projects?.length ?? 0,
+    });
+    return parsed;
+  } catch (error) {
+    activeLogger.error("gemini.parse.failed", {
+      model: PARSE_MODEL,
+      durationMs: Date.now() - startedAt,
+      err: error,
+    });
+    throw error;
+  }
+}
+
+export async function tailorParsedV2(
+  parsed: ParsedResume,
+  jdText: string,
+  onProgress?: TailorProgressCallback,
+  logger?: Logger
+): Promise<TailoredResume> {
+  const activeLogger = resolveLogger(logger).child({ component: "gemini_tailor_v2" });
+  const startedAt = Date.now();
+
+  const requirements = extractJdRequirements(jdText);
+  onProgress?.({
+    step: "requirements_extracted",
+    requiredTerms: requirements.filter((r) => r.priority === "required").map((r) => r.term),
+  });
+
+  activeLogger.info("gemini.requirements.extracted", {
+    requiredCount: requirements.filter((r) => r.priority === "required").length,
+    preferredCount: requirements.filter((r) => r.priority === "preferred").length,
+  });
+
+  const assignments = assignRoleFits(parsed, requirements);
+
+  const tailoredExperience: TailoredResume["experience"] = [];
+  const roleResults: RoleValidationResult[] = [];
+
+  for (let roleIndex = 0; roleIndex < parsed.experience.length; roleIndex += 1) {
+    const role = parsed.experience[roleIndex]!;
+    const result = await tailorRole({
+      parsed,
+      jdText,
+      roleIndex,
+      assignments,
+      logger: activeLogger,
+      onProgress,
+    });
+
+    tailoredExperience.push({
+      company: role.company,
+      title: role.title,
+      location: role.location,
+      dateRange: role.dateRange,
+      bullets: result.bullets,
+    });
+    roleResults.push(result.validation);
+  }
+
+  const tailoredDraft: TailoredResume = TailoredResumeSchema.parse({
+    name: sanitizeText(parsed.name),
+    email: sanitizeText(parsed.email),
+    phone: sanitizeText(parsed.phone),
+    linkedin: isNullLike(parsed.linkedin) ? null : sanitizeText(parsed.linkedin ?? ""),
+    github: isNullLike(parsed.github) ? null : sanitizeText(parsed.github ?? ""),
+    website: isNullLike(parsed.website) ? null : sanitizeText(parsed.website ?? ""),
+    summary: null,
+    skills: generateSkillsPass(parsed.skills, requirements, tailoredExperience).map(sanitizeText),
+    experience: tailoredExperience.map((role) => ({
+      ...role,
+      company: sanitizeText(role.company),
+      title: sanitizeText(role.title),
+      location: sanitizeText(role.location),
+      dateRange: sanitizeText(role.dateRange),
+      bullets: role.bullets.map((bullet) => ({ text: sanitizeBulletText(bullet.text) })),
+    })),
+    education: parsed.education.map((entry) => ({
+      institution: sanitizeText(entry.institution),
+      degree: sanitizeText(entry.degree),
+      dateRange: sanitizeText(entry.dateRange),
+      gpa: isNullLike(entry.gpa) ? null : sanitizeText(entry.gpa ?? ""),
+      honors: isNullLike(entry.honors) ? null : sanitizeText(entry.honors ?? ""),
+    })),
+    projects:
+      parsed.projects?.map((project) => ({
+        name: sanitizeText(project.name),
+        technologies: sanitizeText(project.technologies),
+        bullets: project.bullets.map((bullet) => ({ text: sanitizeBulletText(bullet.text) })),
+      })) ?? null,
+  });
+
+  onProgress?.({ step: "scoring" });
+  const diagnostics = computeDiagnostics(requirements, roleResults, tailoredDraft);
+
+  const review = await reviewTailoredResume(tailoredDraft, jdText, activeLogger);
+  if (review) {
+    onProgress?.({ step: "reviewing", reviewScore: review.score, reviewApproved: review.approved });
+  }
+
+  activeLogger.info("gemini.scoring.done", {
+    jdCoverageScore: diagnostics.jdCoverageScore,
+    role0VisibilityScore: diagnostics.role0VisibilityScore,
+    credibilityScore: diagnostics.credibilityScore,
+    reviewerScore: review?.score ?? null,
+    reviewerApproved: review?.approved ?? null,
+    missingRequiredCount: diagnostics.missingRequiredTerms.length,
+  });
+
+  onProgress?.({
+    step: "optimizing",
+    coverageScore: diagnostics.jdCoverageScore,
+    role0VisibilityScore: diagnostics.role0VisibilityScore,
+    credibilityScore: diagnostics.credibilityScore,
+  });
+
+  const postProcessed = postProcessTailored(parsed, tailoredDraft, jdText);
+
+  activeLogger.info("gemini.tailor.v2.done", {
+    durationMs: Date.now() - startedAt,
+    roles: postProcessed.experience.length,
+    skillsCount: postProcessed.skills.length,
+  });
+
+  return postProcessed;
+}
 
 export async function tailorParsed(
   parsed: ParsedResume,
@@ -506,85 +1297,7 @@ export async function tailorParsed(
   onProgress?: TailorProgressCallback,
   logger?: Logger
 ): Promise<TailoredResume> {
-  const activeLogger = resolveLogger(logger).child({ component: "gemini_tailor" });
-  const startedAt = Date.now();
-
-  const initial = await generateTailoredResume(parsed, jdText, undefined, activeLogger);
-
-  onProgress?.({ step: "reviewing" });
-  const firstReview = await reviewTailoredResume(initial, jdText, activeLogger);
-
-  let selected = initial;
-  let selectedReview = firstReview;
-
-  if (firstReview) {
-    onProgress?.({
-      step: "reviewing",
-      reviewScore: firstReview.score,
-      reviewApproved: firstReview.approved,
-    });
-  }
-
-  if (firstReview && !firstReview.approved) {
-    onProgress?.({ step: "revising" });
-    const revisionFeedback = buildFeedbackForRevision(firstReview);
-    const revised = await generateTailoredResume(
-      parsed,
-      jdText,
-      revisionFeedback,
-      activeLogger
-    );
-    const secondReview = await reviewTailoredResume(revised, jdText, activeLogger);
-
-    // Pick the stronger candidate by reviewer score.
-    if (secondReview && secondReview.score >= firstReview.score) {
-      selected = revised;
-      selectedReview = secondReview;
-      activeLogger.info("gemini.selection.decision", {
-        selected: "revised",
-        firstScore: firstReview.score,
-        secondScore: secondReview.score,
-      });
-    } else if (secondReview === null) {
-      // Second review failed; keep initial since we can't compare scores.
-      activeLogger.info("gemini.selection.decision", {
-        selected: "initial",
-        firstScore: firstReview.score,
-        reason: "second_review_missing",
-      });
-    } else {
-      activeLogger.info("gemini.selection.decision", {
-        selected: "initial",
-        firstScore: firstReview.score,
-        secondScore: secondReview.score,
-      });
-    }
-  } else {
-    activeLogger.info("gemini.selection.decision", {
-      selected: "initial",
-      firstScore: firstReview?.score ?? null,
-      reason: firstReview ? "already_approved" : "first_review_missing",
-    });
-  }
-
-  onProgress?.({ step: "optimizing" });
-  const postProcessed = postProcessTailored(parsed, selected, jdText);
-  activeLogger.info("gemini.postprocess.done", {
-    durationMs: Date.now() - startedAt,
-    experienceCount: postProcessed.experience.length,
-    projectCount: postProcessed.projects?.length ?? 0,
-    skillsCount: postProcessed.skills.length,
-  });
-
-  if (selectedReview && !selectedReview.approved) {
-    activeLogger.warn("gemini.review.not_approved", {
-      score: selectedReview.score,
-      missingRequirementsCount: selectedReview.missingRequirements.length,
-      topBulletIssuesCount: selectedReview.topBulletIssues.length,
-    });
-  }
-
-  return postProcessed;
+  return tailorParsedV2(parsed, jdText, onProgress, logger);
 }
 
 export interface ProcessResumeResult {
@@ -603,14 +1316,20 @@ export async function processResume(
 
   const restoredTailored = TailoredResumeSchema.parse({
     ...tailored,
-    name: parsed.name,
-    email: parsed.email,
-    phone: parsed.phone,
-    linkedin: parsed.linkedin,
-    github: parsed.github,
-    website: parsed.website,
+    name: sanitizeText(parsed.name),
+    email: sanitizeText(parsed.email),
+    phone: sanitizeText(parsed.phone),
+    linkedin: isNullLike(parsed.linkedin) ? null : sanitizeText(parsed.linkedin ?? ""),
+    github: isNullLike(parsed.github) ? null : sanitizeText(parsed.github ?? ""),
+    website: isNullLike(parsed.website) ? null : sanitizeText(parsed.website ?? ""),
     summary: null,
-    education: parsed.education,
+    education: parsed.education.map((entry) => ({
+      institution: sanitizeText(entry.institution),
+      degree: sanitizeText(entry.degree),
+      dateRange: sanitizeText(entry.dateRange),
+      gpa: isNullLike(entry.gpa) ? null : sanitizeText(entry.gpa ?? ""),
+      honors: isNullLike(entry.honors) ? null : sanitizeText(entry.honors ?? ""),
+    })),
   });
 
   return { parsed, tailored: restoredTailored };

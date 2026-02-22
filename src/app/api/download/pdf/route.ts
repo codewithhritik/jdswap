@@ -1,12 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
-import { renderToStream } from "@react-pdf/renderer";
-import { createResumeDocument } from "@/lib/pdf/ResumeDocument";
-import { registerFonts } from "@/lib/pdf/fonts";
-import { TailoredResumeSchema } from "@/lib/schema";
+import { z } from "zod";
 import { createLogger, getOrCreateRequestId } from "@/lib/logger";
-import { ZodError } from "zod";
+import {
+  SourceLayoutSchema,
+  TailoredResumeSchema,
+  type SourceLayout,
+  type TailoredResume,
+} from "@/lib/schema";
+import { buildCompactedPdfResult } from "@/lib/pdf-export-pipeline";
+import { computeExportRevision } from "@/lib/export-revision";
 
-registerFonts();
+const DownloadPdfRequestSchema = z.object({
+  resume: TailoredResumeSchema,
+  sourceLayout: SourceLayoutSchema,
+});
 
 export async function POST(request: NextRequest) {
   const requestId = getOrCreateRequestId(request);
@@ -16,63 +23,62 @@ export async function POST(request: NextRequest) {
     component: "pdf_download_route",
   });
   const requestStartedAt = Date.now();
-  logger.info("pdf.request.received");
 
   try {
-    const body = await request.json();
-    let resume;
+    let parsedPayload: { resume: TailoredResume; sourceLayout: SourceLayout };
     try {
-      resume = TailoredResumeSchema.parse(body);
-    } catch (error) {
-      if (error instanceof ZodError) {
-        logger.warn("pdf.validation.failed", {
-          reason: "invalid_payload",
-          issues: error.issues.length,
-          durationMs: Date.now() - requestStartedAt,
-        });
-        return NextResponse.json(
-          { error: "Invalid resume payload." },
-          { status: 400, headers: { "x-request-id": requestId } }
-        );
-      }
-      throw error;
-    }
-
-    logger.info("pdf.render.start");
-    const renderStartedAt = Date.now();
-    const doc = createResumeDocument(resume);
-    const pdfStream = await renderToStream(doc as never);
-
-    const chunks: Uint8Array[] = [];
-    for await (const chunk of pdfStream) {
-      chunks.push(
-        chunk instanceof Uint8Array
-          ? chunk
-          : new Uint8Array(chunk as unknown as ArrayBuffer)
+      const body = await request.json();
+      parsedPayload = DownloadPdfRequestSchema.parse(body);
+    } catch {
+      logger.warn("pdf.validation.failed", {
+        reason: "invalid_payload",
+        durationMs: Date.now() - requestStartedAt,
+      });
+      return NextResponse.json(
+        { error: "Request body must include valid resume and sourceLayout." },
+        { status: 400, headers: { "x-request-id": requestId } }
       );
     }
 
-    const totalLength = chunks.reduce((acc, c) => acc + c.length, 0);
-    const pdfBuffer = new Uint8Array(totalLength);
-    let offset = 0;
-    for (const chunk of chunks) {
-      pdfBuffer.set(chunk, offset);
-      offset += chunk.length;
-    }
-    logger.info("pdf.render.done", {
+    logger.info("pdf.request.received", {
+      experienceCount: parsedPayload.resume.experience.length,
+      projectCount: parsedPayload.resume.projects?.length ?? 0,
+      skillsCount: parsedPayload.resume.skills.length,
+      sectionsCount: parsedPayload.sourceLayout.sections.length,
+    });
+    const exportRevision = computeExportRevision({
+      resume: parsedPayload.resume,
+      sourceLayout: parsedPayload.sourceLayout,
+    });
+
+    const pdfResult = await buildCompactedPdfResult(
+      parsedPayload.resume,
+      parsedPayload.sourceLayout
+    );
+
+    logger.info("pdf.convert.start", {
+      estimatedLines: pdfResult.estimatedLines,
+      exportRevision,
+    });
+    const convertStartedAt = Date.now();
+    const pdfBuffer = pdfResult.pdfBytes;
+    logger.info("pdf.convert.done", {
       outputBytes: pdfBuffer.length,
-      durationMs: Date.now() - renderStartedAt,
+      pageCount: pdfResult.pageCount,
+      durationMs: Date.now() - convertStartedAt,
     });
     logger.info("pdf.request.complete", {
       durationMs: Date.now() - requestStartedAt,
     });
 
-    return new Response(pdfBuffer, {
+    return new Response(new Uint8Array(pdfBuffer), {
       headers: {
         "Content-Type": "application/pdf",
-        "Content-Disposition": 'inline; filename="tailored-resume.pdf"',
+        "Content-Disposition": 'attachment; filename="tailored-resume.pdf"',
         "Content-Length": String(pdfBuffer.length),
         "x-request-id": requestId,
+        "x-export-revision": exportRevision,
+        "x-page-count": String(pdfResult.pageCount),
       },
     });
   } catch (error) {
