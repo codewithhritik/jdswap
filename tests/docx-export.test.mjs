@@ -147,6 +147,7 @@ test("download route rejects legacy/invalid payload and accepts JSON contract", 
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
   );
   assert.match(validRes.headers.get("x-export-revision") ?? "", /^[a-f0-9]{24}$/);
+  assert.match(validRes.headers.get("x-docx-page-count") ?? "", /^[1-9][0-9]*$/);
 });
 
 test("generated DOCX preserves education details and source-only custom section", async () => {
@@ -305,13 +306,10 @@ test("long skill sections are preserved in multi-page DOCX output", async () => 
 
   const res = await postJson(post, payload);
   assert.equal(res.status, 200);
-
-  const buffer = Buffer.from(await res.arrayBuffer());
-  const output = await mammoth.extractRawText({ buffer });
-
-  const bulletCount = (output.value.match(/•/g) ?? []).length;
+  const { rawText } = await extractDocxArtifacts(res);
+  const bulletCount = (rawText.match(/•/g) ?? []).length;
   assert.equal(bulletCount, 5);
-  assert.match(output.value, /z-last-skill/);
+  assert.match(rawText, /z-last-skill/);
 });
 
 test("long sections keep project and skill tail content in multi-page DOCX output", async () => {
@@ -375,7 +373,7 @@ test("DOCX route keeps working when render-check is enabled", async () => {
   }
 });
 
-test("route allows long content and returns DOCX with revision header", async () => {
+test("route allows long content and returns DOCX with revision header and explicit page breaks", async () => {
   const post = getPostHandler();
   const payload = buildBasePayload();
   const longLine = "Critical production migration detail with measured outcomes. ".repeat(200);
@@ -388,4 +386,11 @@ test("route allows long content and returns DOCX with revision header", async ()
   const res = await postJson(post, payload);
   assert.equal(res.status, 200);
   assert.match(res.headers.get("x-export-revision") ?? "", /^[a-f0-9]{24}$/);
+  const docxPageCount = Number(res.headers.get("x-docx-page-count") ?? "0");
+  assert.ok(Number.isFinite(docxPageCount) && docxPageCount >= 1);
+
+  const { documentXml } = await extractDocxArtifacts(res);
+  if (docxPageCount > 1) {
+    assert.match(documentXml, /<w:br w:type="page"\/>/);
+  }
 });

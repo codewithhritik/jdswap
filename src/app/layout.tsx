@@ -45,7 +45,7 @@ const ibmPlexMono = IBM_Plex_Mono({
 export const metadata: Metadata = {
   title: "JDSwap — Tailor Your Resume",
   description:
-    "Paste your resume and a job description. Get a tailored, ATS-optimized resume with exact DOCX/PDF export preview.",
+    "Paste your resume and a job description. Get a tailored, ATS-optimized resume with a Word-exact preview matching the downloaded DOCX.",
 };
 
 export const viewport: Viewport = {

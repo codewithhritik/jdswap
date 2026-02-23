@@ -24,4 +24,5 @@ test("use-export-preview tracks stale state and export revision", async () => {
   assert.match(source, /isPreviewStale/);
   assert.match(source, /x-export-revision/);
   assert.match(source, /x-page-count/);
+  assert.match(source, /x-docx-page-count/);
 });

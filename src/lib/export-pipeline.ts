@@ -5,6 +5,7 @@ import type { SourceLayout, TailoredResume } from "./schema";
 
 export interface BuildCompactedDocxBufferResult {
   docxBuffer: Buffer;
+  pageCount: number;
   estimatedLines: number;
 }
 
@@ -16,10 +17,11 @@ export async function buildCompactedDocxBuffer(
     resume,
     sourceLayout
   );
-  const docxBuffer = await generateCanonicalDocx(model);
+  const docxResult = await generateCanonicalDocx(model);
 
   return {
-    docxBuffer,
+    docxBuffer: docxResult.buffer,
+    pageCount: docxResult.pageCount,
     estimatedLines: estimateResumeLines(resume, sourceLayout),
   };
 }

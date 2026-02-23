@@ -1,9 +1,11 @@
 import JSZip from "jszip";
-import type {
-  CanonicalParagraph,
-  CanonicalParagraphStyleOptions,
-  CanonicalResumeDocumentModel,
-} from "./export-model";
+import { PDFDocument, StandardFonts, type PDFFont } from "pdf-lib";
+import type { CanonicalParagraphStyleOptions, CanonicalResumeDocumentModel } from "./export-model";
+import {
+  buildCanonicalPaginationPlan,
+  type CanonicalPlannedParagraph,
+  type CanonicalTextMeasure,
+} from "./canonical-pagination";
 import { getCanonicalParagraphStyleOptions } from "./export-model";
 
 function escapeXml(text: string): string {
@@ -33,24 +35,14 @@ function runXml(text: string, options?: CanonicalParagraphStyleOptions): string 
   return `<w:r>${rPr}<w:t xml:space="preserve">${escapeXml(text)}</w:t></w:r>`;
 }
 
-function skillsLineContentXml(
-  text: string,
-  options?: CanonicalParagraphStyleOptions
-): string {
-  const separatorIndex = text.indexOf(":");
-  if (separatorIndex <= 0) {
-    return runXml(text, options);
-  }
-
-  const label = text.slice(0, separatorIndex + 1);
-  const value = text.slice(separatorIndex + 1);
-  const labelXml = runXml(label, { ...options, bold: true });
-  const valueXml = value ? runXml(value, options) : "";
-  return `${labelXml}${valueXml}`;
+function breakRunXml(type: "line" | "page"): string {
+  return type === "page"
+    ? "<w:r><w:br w:type=\"page\"/></w:r>"
+    : "<w:r><w:br/></w:r>";
 }
 
-function paragraphXml(paragraph: CanonicalParagraph): string {
-  const opts = getCanonicalParagraphStyleOptions(paragraph.style);
+function paragraphXml(planned: CanonicalPlannedParagraph): string {
+  const opts = getCanonicalParagraphStyleOptions(planned.paragraph.style);
   const pPr: string[] = [];
 
   if (opts.center) pPr.push('<w:jc w:val="center"/>');
@@ -74,10 +66,34 @@ function paragraphXml(paragraph: CanonicalParagraph): string {
   }
 
   const pPrXml = pPr.length > 0 ? `<w:pPr>${pPr.join("")}</w:pPr>` : "";
-  const contentXml =
-    paragraph.semanticRole === "skillsLine"
-      ? skillsLineContentXml(paragraph.text, opts)
-      : runXml(paragraph.text, opts);
+  const contentParts: string[] = [];
+
+  for (const line of planned.lines) {
+    if (line.breakBefore === "page") {
+      contentParts.push(breakRunXml("page"));
+    } else if (line.breakBefore === "line") {
+      contentParts.push(breakRunXml("line"));
+    }
+
+    if (planned.paragraph.semanticRole === "skillsLine") {
+      if (line.skillsLabel) {
+        contentParts.push(runXml(line.skillsLabel, { ...opts, bold: true }));
+      }
+      if (line.text || !line.skillsLabel) {
+        contentParts.push(runXml(line.text, opts));
+      }
+      continue;
+    }
+
+    const lineText = line.bulletMarker ? `\u2022 ${line.text}` : line.text;
+    contentParts.push(runXml(lineText, opts));
+  }
+
+  if (contentParts.length === 0) {
+    contentParts.push(runXml(planned.paragraph.text, opts));
+  }
+
+  const contentXml = contentParts.join("");
   return `<w:p>${pPrXml}${contentXml}</w:p>`;
 }
 
@@ -141,7 +157,7 @@ function documentRelsXml(): string {
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"/>`;
 }
 
-function documentXml(paragraphs: CanonicalParagraph[]): string {
+function documentXml(paragraphs: CanonicalPlannedParagraph[]): string {
   const paragraphXmls = paragraphs.map(paragraphXml).join("");
 
   return `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
@@ -159,7 +175,9 @@ function documentXml(paragraphs: CanonicalParagraph[]): string {
 
 export async function generateCanonicalDocx(
   model: CanonicalResumeDocumentModel
-): Promise<Buffer> {
+): Promise<{ buffer: Buffer; pageCount: number }> {
+  const measure = await createTimesMeasure();
+  const paginationPlan = buildCanonicalPaginationPlan(model, measure);
   const zip = new JSZip();
   zip.file("[Content_Types].xml", contentTypesXml());
   zip.folder("_rels")!.file(".rels", packageRelsXml());
@@ -167,7 +185,30 @@ export async function generateCanonicalDocx(
   zip.folder("docProps")!.file("app.xml", appPropsXml());
   zip.folder("word")!.file("styles.xml", stylesXml());
   zip.folder("word")!.folder("_rels")!.file("document.xml.rels", documentRelsXml());
-  zip.folder("word")!.file("document.xml", documentXml(model.paragraphs));
+  zip.folder("word")!.file("document.xml", documentXml(paginationPlan.paragraphs));
 
-  return zip.generateAsync({ type: "nodebuffer" });
+  const buffer = await zip.generateAsync({ type: "nodebuffer" });
+  return {
+    buffer,
+    pageCount: paginationPlan.pageCount,
+  };
+}
+
+async function createTimesMeasure(): Promise<CanonicalTextMeasure> {
+  const measurePdfDoc = await PDFDocument.create();
+  const regular = await measurePdfDoc.embedFont(StandardFonts.TimesRoman);
+  const bold = await measurePdfDoc.embedFont(StandardFonts.TimesRomanBold);
+  const italic = await measurePdfDoc.embedFont(StandardFonts.TimesRomanItalic);
+  const boldItalic = await measurePdfDoc.embedFont(StandardFonts.TimesRomanBoldItalic);
+  const fonts: Record<"regular" | "bold" | "italic" | "boldItalic", PDFFont> = {
+    regular,
+    bold,
+    italic,
+    boldItalic,
+  };
+
+  return {
+    widthOfTextAtSize: (text, font, fontSize) =>
+      fonts[font].widthOfTextAtSize(text, fontSize),
+  };
 }

@@ -118,7 +118,9 @@
   .jdswap-docx-wrapper {
     background: transparent !important;
     padding: 0 !important;
-    align-items: stretch !important;
+    align-items: center !important;
+    width: max-content !important;
+    margin: 0 auto !important;
   }
 
   .jdswap-docx-wrapper > section.jdswap-docx {
@@ -132,6 +134,16 @@
 
   section.jdswap-docx {
     background: white !important;
+  }
+
+  .jdswap-docx-stage-shell {
+    margin: 0 auto;
+    position: relative;
+  }
+
+  .jdswap-docx-stage {
+    transform-origin: top left;
+    will-change: transform;
   }
 }
 

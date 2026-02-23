@@ -8,6 +8,7 @@ interface ExportArtifacts {
   docxBlob: Blob;
   revision: string;
   pageCount: number | null;
+  docxPageCount: number | null;
 }
 
 interface UseExportPreviewArgs {
@@ -22,6 +23,7 @@ export interface UseExportPreviewResult {
   docxBlob: Blob | null;
   revision: string | null;
   pageCount: number | null;
+  docxPageCount: number | null;
   isGeneratingPreview: boolean;
   isPreviewStale: boolean;
   previewError: string | null;
@@ -81,6 +83,7 @@ async function fetchArtifacts(
     docxBlob,
     revision,
     pageCount: parsePageCount(pdfResponse.headers.get("x-page-count")),
+    docxPageCount: parsePageCount(docxResponse.headers.get("x-docx-page-count")),
   };
 }
 
@@ -94,6 +97,7 @@ export function useExportPreview({
   const [docxBlob, setDocxBlob] = useState<Blob | null>(null);
   const [revision, setRevision] = useState<string | null>(null);
   const [pageCount, setPageCount] = useState<number | null>(null);
+  const [docxPageCount, setDocxPageCount] = useState<number | null>(null);
   const [isGeneratingPreview, setIsGeneratingPreview] = useState(false);
   const [isPreviewStale, setIsPreviewStale] = useState(false);
   const [previewError, setPreviewError] = useState<string | null>(null);
@@ -113,6 +117,7 @@ export function useExportPreview({
       setDocxBlob(null);
       setRevision(null);
       setPageCount(null);
+      setDocxPageCount(null);
       return;
     }
 
@@ -132,6 +137,7 @@ export function useExportPreview({
         setDocxBlob(next.docxBlob);
         setRevision(next.revision || null);
         setPageCount(next.pageCount);
+        setDocxPageCount(next.docxPageCount);
         setPreviewError(null);
         setIsPreviewStale(false);
       } catch (error) {
@@ -161,6 +167,7 @@ export function useExportPreview({
       docxBlob,
       revision,
       pageCount,
+      docxPageCount,
       isGeneratingPreview,
       isPreviewStale,
       previewError,
@@ -170,6 +177,7 @@ export function useExportPreview({
       isGeneratingPreview,
       isPreviewStale,
       pageCount,
+      docxPageCount,
       pdfBlob,
       previewError,
       revision,

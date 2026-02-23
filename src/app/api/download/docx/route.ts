@@ -18,7 +18,8 @@ const DownloadDocxRequestSchema = z.object({
 function buildDocxResponse(
   buffer: Buffer,
   requestId: string,
-  exportRevision: string
+  exportRevision: string,
+  pageCount: number
 ): Response {
   return new Response(new Uint8Array(buffer), {
     headers: {
@@ -28,6 +29,7 @@ function buildDocxResponse(
       "Content-Length": String(buffer.length),
       "x-request-id": requestId,
       "x-export-revision": exportRevision,
+      "x-docx-page-count": String(pageCount),
     },
   });
 }
@@ -68,12 +70,13 @@ export async function POST(request: NextRequest) {
       sourceLayout: parsed.sourceLayout,
     });
 
-    const { docxBuffer, estimatedLines } = await buildCompactedDocxBuffer(
+    const { docxBuffer, estimatedLines, pageCount } = await buildCompactedDocxBuffer(
       parsed.resume,
       parsed.sourceLayout
     );
     logger.info("docx.generate.done", {
       estimatedLines,
+      pageCount,
       outputBytes: docxBuffer.length,
       exportRevision,
     });
@@ -81,7 +84,7 @@ export async function POST(request: NextRequest) {
       durationMs: Date.now() - requestStartedAt,
     });
 
-    return buildDocxResponse(docxBuffer, requestId, exportRevision);
+    return buildDocxResponse(docxBuffer, requestId, exportRevision, pageCount);
   } catch (error) {
     logger.error("docx.request.failed", {
       durationMs: Date.now() - requestStartedAt,

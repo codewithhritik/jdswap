@@ -366,17 +366,15 @@ export default function Home() {
                   Your tailored draft is ready
                 </h1>
                 <p className="mt-3 text-base leading-7 text-warm-muted">
-                  Edit from the form or Live preview. Exact PDF/DOCX tabs stay read-only for artifact fidelity.
+                  Edit from the form and review a Word-exact preview that mirrors the downloaded DOCX.
                 </p>
               </header>
               <ResumeWorkspace
                 resume={editorState.resume}
-                sourceLayout={editorState.sourceLayout}
                 onFormChange={handleEditChange}
-                pdfBlob={exportPreview.pdfBlob}
                 docxBlob={exportPreview.docxBlob}
                 previewRevision={exportPreview.revision}
-                previewPageCount={exportPreview.pageCount}
+                previewDocxPageCount={exportPreview.docxPageCount}
                 isGeneratingPreview={exportPreview.isGeneratingPreview}
                 isPreviewStale={exportPreview.isPreviewStale}
                 previewError={exportPreview.previewError}

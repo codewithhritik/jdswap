@@ -1,18 +1,16 @@
 "use client";
 
 import { useState } from "react";
-import type { SourceLayout, TailoredResume } from "@/lib/schema";
+import type { TailoredResume } from "@/lib/schema";
 import { ResumeEditor } from "@/components/ResumeEditor";
 import { ExportPreview } from "@/components/ExportPreview";
 
 interface ResumeWorkspaceProps {
   resume: TailoredResume;
-  sourceLayout: SourceLayout;
   onFormChange: (resume: TailoredResume) => void;
-  pdfBlob: Blob | null;
   docxBlob: Blob | null;
   previewRevision: string | null;
-  previewPageCount: number | null;
+  previewDocxPageCount: number | null;
   isGeneratingPreview: boolean;
   isPreviewStale: boolean;
   previewError?: string | null;
@@ -23,12 +21,10 @@ type WorkspacePane = "form" | "preview";
 
 export function ResumeWorkspace({
   resume,
-  sourceLayout,
   onFormChange,
-  pdfBlob,
   docxBlob,
   previewRevision,
-  previewPageCount,
+  previewDocxPageCount,
   isGeneratingPreview,
   isPreviewStale,
   previewError,
@@ -58,13 +54,9 @@ export function ResumeWorkspace({
 
         <div className={activePane === "preview" ? "block" : "hidden md:block md:sticky md:top-6"}>
           <ExportPreview
-            resume={resume}
-            sourceLayout={sourceLayout}
-            onResumeChange={onFormChange}
-            pdfBlob={pdfBlob}
             docxBlob={docxBlob}
             revision={previewRevision}
-            pageCount={previewPageCount}
+            docxPageCount={previewDocxPageCount}
             isGeneratingPreview={isGeneratingPreview}
             isPreviewStale={isPreviewStale}
             previewError={previewError ?? null}
