@@ -1,46 +1,60 @@
-# JDSwap — Project Instructions
+# JDSwap — Project Context
 
 ## Overview
-Resume tailoring web app. Takes pasted resume text + job description, uses Google Gemini to rewrite bullets with JD keywords, outputs a 1-page PDF.
+JDSwap is a Next.js app that tailors resumes to job descriptions using Gemini and produces stable, one-page export artifacts.
+The app maintains canonical pagination/layout behavior across DOCX and PDF outputs and shows exact artifact previews in the UI.
 
-## Tech Stack
-- Next.js 14+ (App Router, TypeScript, `src/` directory)
-- Tailwind CSS (dark theme)
-- Google Gemini 2.5 Flash via `@google/genai`
-- `@react-pdf/renderer` for server-side PDF generation
+## Current Tech Stack
+- Next.js 14 (App Router, TypeScript, `src/` layout)
+- Tailwind CSS
+- Gemini via `@google/genai`
+- DOCX preview via `docx-preview`
+- PDF generation/parsing support via `pdf-lib`, `pdfjs-dist`, `react-pdf`
 - Zod for schema validation
 
-## Skills
-- **Always** reference the Vercel React Best Practices skill at `.claude/skills/vercel-react-best-practices` when writing or modifying any React/Next.js code
-- Follow the skill's rules for: eliminating waterfalls, bundle optimization, server-side performance, re-render optimization, and rendering performance
+## Core Runtime Flow
+1. Parse/tailor resume content using Gemini (`src/lib/gemini.ts`).
+2. Build canonical export model/pipeline (`src/lib/export-model.ts`, `src/lib/export-pipeline.ts`).
+3. Apply canonical pagination constraints (`src/lib/canonical-pagination.ts`).
+4. Render export artifacts:
+   - DOCX path: `src/lib/docx-export.ts`
+   - PDF path: `src/lib/pdf-renderer.ts`, `src/lib/pdf-export-pipeline.ts`
+5. Surface exact preview artifacts in UI (`src/components/ExportPreview.tsx`, `src/components/DocxArtifactPreview.tsx`, `src/components/PdfExactPreview.tsx`).
 
-## Conventions
-- Server Components by default; only add `"use client"` when the component needs browser APIs, event handlers, or hooks
-- TypeScript strict mode — no `any` types
-- Zod for all runtime validation (API inputs, Gemini responses)
-- Imports use `@/` path alias (maps to `src/`)
-
-## Project Structure
+## Key Directories
 ```
 src/
-├── app/              # Next.js App Router pages and API routes
-├── components/       # React components (client components where needed)
-└── lib/              # Business logic, Gemini client, PDF rendering, schemas
-    └── pdf/          # @react-pdf/renderer components and styles
+├── app/                 # App Router pages + API routes
+├── components/          # UI components (workspace, previews, loading states)
+└── lib/                 # Tailoring, schema, export model/pipeline, renderers
+
+tests/                   # Node test suites for export model/pipeline/renderers/UI-source checks
 ```
 
-## Commands
-- `npm run dev` — Start dev server (localhost:3000)
-- `npm run build` — Production build (run to verify before committing)
-- `npm run lint` — ESLint
+## Important Files
+- `src/lib/gemini.ts` — tailoring/parsing orchestration and progress events
+- `src/lib/schema.ts` — Zod schemas and shared types
+- `src/lib/canonical-pagination.ts` — canonical pagination logic
+- `src/lib/docx-export.ts` — DOCX generation path
+- `src/lib/pdf-renderer.ts` — PDF rendering logic
+- `src/lib/use-export-preview.ts` — preview artifact fetch/state hook
+
+## Scripts
+- `npm run dev` — dev server (`.next-dev`)
+- `npm run build` — production build (`.next-prod`)
+- `npm run start` — run built app from `.next-prod`
+- `npm run lint` — lint checks
+- `npm run test:docx` — build + DOCX export tests
+- `npm run test:pdf` — build + PDF export tests
+- `npm run test:export-model` — export model contract tests
+- `npm run test:pdf-pipeline` — PDF renderer + pipeline tests
 
 ## Environment
-- `GEMINI_API_KEY` in `.env.local` — required for Gemini API calls
+- Required: `GEMINI_API_KEY` in `.env.local`
+- Optional: `LOG_LEVEL` for logging verbosity
 
-## Key Libraries
-| Library | Purpose | Docs |
-|---------|---------|------|
-| `@google/genai` | Gemini API client with structured JSON output | google/genai npm |
-| `@react-pdf/renderer` | Server-side PDF generation with JSX | react-pdf.org |
-| `zod` | Schema validation for Gemini responses | zod.dev |
-| `zod-to-json-schema` | Convert Zod schemas to JSON Schema for Gemini | npm |
+## Engineering Notes
+- Keep export behavior canonical and deterministic across formats.
+- Prefer shared constants/tokens in export-model layer over format-specific drift.
+- Validate external/model inputs with Zod before downstream processing.
+- Keep API routes thin; put business logic in `src/lib/*`.

@@ -33,6 +33,7 @@ yarn-error.log*
 !.env.example
 
 # local AI/editor tooling metadata
+.agents/
 .claude/
 .cline/
 .cursor/
