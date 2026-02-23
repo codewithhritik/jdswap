@@ -1,15 +1,17 @@
 "use client";
 
 import { useState } from "react";
-import type { TailoredResume } from "@/lib/schema";
+import type { ParsedResume, RewriteTarget, TailoredResume } from "@/lib/schema";
 import { ResumeEditor } from "@/components/ResumeEditor";
 import { ExportPreview } from "@/components/ExportPreview";
 
 interface ResumeWorkspaceProps {
   resume: TailoredResume;
+  parsed: ParsedResume | null;
+  jdText: string | null;
   onFormChange: (resume: TailoredResume) => void;
+  onApplyRewrite: (target: RewriteTarget, bullets: Array<{ text: string }>) => void;
   docxBlob: Blob | null;
-  previewRevision: string | null;
   previewDocxPageCount: number | null;
   isGeneratingPreview: boolean;
   isPreviewStale: boolean;
@@ -21,9 +23,11 @@ type WorkspacePane = "form" | "preview";
 
 export function ResumeWorkspace({
   resume,
+  parsed,
+  jdText,
   onFormChange,
+  onApplyRewrite,
   docxBlob,
-  previewRevision,
   previewDocxPageCount,
   isGeneratingPreview,
   isPreviewStale,
@@ -49,13 +53,18 @@ export function ResumeWorkspace({
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[minmax(0,1fr)_minmax(0,1.02fr)] md:items-start">
         <div className={activePane === "form" ? "block" : "hidden md:block"}>
-          <ResumeEditor resume={resume} onChange={onFormChange} />
+          <ResumeEditor
+            resume={resume}
+            parsed={parsed}
+            jdText={jdText}
+            onChange={onFormChange}
+            onApplyRewrite={onApplyRewrite}
+          />
         </div>
 
         <div className={activePane === "preview" ? "block" : "hidden md:block md:sticky md:top-6"}>
           <ExportPreview
             docxBlob={docxBlob}
-            revision={previewRevision}
             docxPageCount={previewDocxPageCount}
             isGeneratingPreview={isGeneratingPreview}
             isPreviewStale={isPreviewStale}

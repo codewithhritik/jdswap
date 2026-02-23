@@ -14,6 +14,7 @@ import type {
   LoadingProgress,
   SourceLayout,
   ParsedResume,
+  RewriteTarget,
 } from "@/lib/schema";
 import { editorReducer, type EditorState } from "@/lib/editor-state";
 import { useExportPreview } from "@/lib/use-export-preview";
@@ -59,6 +60,8 @@ export default function Home() {
       ({
         resume: null,
         sourceLayout: null,
+        parsed: null,
+        jdText: null,
       }) satisfies EditorState
   );
   const exportPreview = useExportPreview({
@@ -73,7 +76,7 @@ export default function Home() {
     setDownloadError(null);
     dispatchEditor({
       type: "BULK_REPLACE",
-      payload: { resume: null, sourceLayout: null },
+      payload: { resume: null, sourceLayout: null, parsed: null, jdText: null },
     });
     setProgress(null);
 
@@ -142,7 +145,12 @@ export default function Home() {
       if (result) {
         dispatchEditor({
           type: "BULK_REPLACE",
-          payload: { resume: result.tailored, sourceLayout: result.sourceLayout },
+          payload: {
+            resume: result.tailored,
+            sourceLayout: result.sourceLayout,
+            parsed: result.parsed,
+            jdText,
+          },
         });
         setState("editing");
       } else {
@@ -158,6 +166,20 @@ export default function Home() {
     setDownloadError(null);
     dispatchEditor({ type: "FORM_PATCH", payload: { resume } });
   }, []);
+
+  const handleApplyRewrite = useCallback(
+    (target: RewriteTarget, bullets: Array<{ text: string }>) => {
+      setDownloadError(null);
+      dispatchEditor({
+        type: "APPLY_REWRITE",
+        payload: {
+          target,
+          bullets,
+        },
+      });
+    },
+    []
+  );
 
   useEffect(() => {
     if (state !== "editing") return;
@@ -246,7 +268,7 @@ export default function Home() {
     if (!window.confirm("Discard your edits and start over?")) return;
     dispatchEditor({
       type: "BULK_REPLACE",
-      payload: { resume: null, sourceLayout: null },
+      payload: { resume: null, sourceLayout: null, parsed: null, jdText: null },
     });
     setState("idle");
     setError(null);
@@ -372,8 +394,10 @@ export default function Home() {
               <ResumeWorkspace
                 resume={editorState.resume}
                 onFormChange={handleEditChange}
+                parsed={editorState.parsed}
+                jdText={editorState.jdText}
+                onApplyRewrite={handleApplyRewrite}
                 docxBlob={exportPreview.docxBlob}
-                previewRevision={exportPreview.revision}
                 previewDocxPageCount={exportPreview.docxPageCount}
                 isGeneratingPreview={exportPreview.isGeneratingPreview}
                 isPreviewStale={exportPreview.isPreviewStale}
@@ -392,8 +416,8 @@ export default function Home() {
                 statusText={
                   exportPreview.isGeneratingPreview || exportPreview.isPreviewStale
                     ? "Syncing preview artifacts..."
-                    : exportPreview.revision
-                      ? `Preview synced · rev ${exportPreview.revision.slice(0, 8)}`
+                    : exportPreview.docxBlob && exportPreview.pdfBlob
+                      ? "Preview synced"
                       : "Waiting for preview artifacts..."
                 }
               />

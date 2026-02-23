@@ -1,12 +1,13 @@
 import { buildRenderSections } from "./resume-layout";
 import type { SourceLayout, TailoredResume } from "./schema";
-import { normalizeSkillLines } from "./skills";
+import { compactSkillsForExport, normalizeSkillLines } from "./skills";
 import { isNullLike, sanitizeText } from "./text";
 
 export type CanonicalParagraphStyleName =
   | "name"
   | "contact"
   | "sectionHeading"
+  | "skills"
   | "body"
   | "entryHeader"
   | "bullet";
@@ -20,6 +21,7 @@ export interface CanonicalParagraphStyleOptions {
   spacingAfter?: number;
   indentLeft?: number;
   hanging?: number;
+  lineHeightMultiple?: number;
   sectionDivider?: boolean;
 }
 
@@ -51,22 +53,27 @@ const STYLE_OPTIONS: Record<
   sectionHeading: {
     bold: true,
     fontSizeHalfPoints: 22,
-    spacingBefore: 140,
-    spacingAfter: 70,
+    spacingBefore: 120,
+    spacingAfter: 55,
     sectionDivider: true,
+  },
+  skills: {
+    fontSizeHalfPoints: 20,
+    spacingAfter: 14,
+    lineHeightMultiple: 1.12,
   },
   body: {
     fontSizeHalfPoints: 21,
-    spacingAfter: 30,
+    spacingAfter: 20,
   },
   entryHeader: {
     bold: true,
     fontSizeHalfPoints: 21,
-    spacingAfter: 25,
+    spacingAfter: 18,
   },
   bullet: {
     fontSizeHalfPoints: 20,
-    spacingAfter: 20,
+    spacingAfter: 12,
     indentLeft: 360,
     hanging: 220,
   },
@@ -108,7 +115,9 @@ export function buildCanonicalResumeDocumentModel(
   }
 
   const sections = buildRenderSections(resume, sourceLayout);
-  const skillLines = normalizeSkillLines(resume.skills)
+  const skillLines = compactSkillsForExport(
+    normalizeSkillLines(resume.skills)
+  )
     .map(sanitizeText)
     .filter((line) => !isNullLike(line));
 
@@ -128,10 +137,18 @@ export function buildCanonicalResumeDocumentModel(
     }
 
     if (section.kind === "skills") {
-      const lines = skillLines.length > 0 ? skillLines : section.sourceLines;
+      const fallbackSkillLines = compactSkillsForExport(
+        normalizeSkillLines(section.sourceLines)
+      );
+      const lines =
+        skillLines.length > 0
+          ? skillLines
+          : fallbackSkillLines.length > 0
+            ? fallbackSkillLines
+            : section.sourceLines;
       for (const line of lines) {
         if (isNullLike(line)) continue;
-        pushParagraph(paragraphs, "body", line, "skillsLine");
+        pushParagraph(paragraphs, "skills", line, "skillsLine");
       }
       continue;
     }

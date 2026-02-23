@@ -16,7 +16,6 @@ const DocxArtifactPreview = dynamic(
 
 interface ExportPreviewProps {
   docxBlob: Blob | null;
-  revision: string | null;
   docxPageCount: number | null;
   isGeneratingPreview: boolean;
   isPreviewStale: boolean;
@@ -26,7 +25,6 @@ interface ExportPreviewProps {
 
 export function ExportPreview({
   docxBlob,
-  revision,
   docxPageCount,
   isGeneratingPreview,
   isPreviewStale,
@@ -40,7 +38,7 @@ export function ExportPreview({
   }, [isGeneratingPreview, isPreviewStale]);
 
   return (
-    <section className="rounded-2xl border border-surface-border/85 bg-surface/95 p-4 shadow-[0_14px_36px_rgba(0,0,0,0.16)] sm:p-5">
+    <section className="w-full min-w-0 rounded-2xl border border-surface-border/85 bg-surface/95 p-4 shadow-[0_14px_36px_rgba(0,0,0,0.16)] sm:p-5">
       <header className="mb-4 flex flex-wrap items-end justify-between gap-3">
         <div>
           <p className="text-[11px] uppercase tracking-[0.12em] text-warm-faint">
@@ -55,8 +53,9 @@ export function ExportPreview({
         </div>
 
         <div className="rounded-lg border border-surface-border bg-base/20 px-3 py-2 text-[11px] uppercase tracking-[0.09em] text-warm-faint">
-          {docxPageCount ? `${docxPageCount} page${docxPageCount > 1 ? "s" : ""} · ` : ""}
-          {revision ? `rev ${revision.slice(0, 8)}` : "rev --"}
+          {docxPageCount
+            ? `${docxPageCount} page${docxPageCount > 1 ? "s" : ""}`
+            : "Page count pending"}
         </div>
       </header>
 

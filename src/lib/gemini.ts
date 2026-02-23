@@ -7,6 +7,10 @@ import {
   RoleFitAssignmentSchema,
   RoleValidationResultSchema,
   TailorDiagnosticsSchema,
+  RewriteTargetSchema,
+  RewriteFeedbackSchema,
+  RewriteBulletCountPolicySchema,
+  RewriteResponseSchema,
   type TailorReview,
   type TailoredResume,
   type ParsedResume,
@@ -15,12 +19,18 @@ import {
   type RoleFitAssignment,
   type RoleValidationResult,
   type TailorDiagnostics,
+  type RewriteTarget,
+  type RewriteFeedback,
+  type RewriteBulletCountPolicy,
+  type RewriteResponse,
 } from "./schema";
 import {
   PARSE_SYSTEM_PROMPT,
   REVIEW_SYSTEM_PROMPT,
+  REWRITE_SYSTEM_PROMPT,
   buildParsePrompt,
   buildReviewPrompt,
+  buildRewritePrompt,
 } from "./prompt";
 import { normalizeSkillLines } from "./skills";
 import { createLogger, type Logger } from "./logger";
@@ -1347,4 +1357,233 @@ export async function processResume(
   });
 
   return { parsed, tailored: restoredTailored };
+}
+
+function getRewriteEntryContext(
+  currentResume: TailoredResume,
+  target: RewriteTarget
+): {
+  entry:
+    | TailoredResume["experience"][number]
+    | NonNullable<TailoredResume["projects"]>[number];
+  minBulletCount: number;
+  maxBulletCount: number;
+} {
+  if (target.section === "experience") {
+    const entry = currentResume.experience[target.entryIndex];
+    if (!entry) {
+      throw new Error(`Experience entry index ${target.entryIndex} is out of bounds.`);
+    }
+    return { entry, minBulletCount: 1, maxBulletCount: 5 };
+  }
+
+  if (!currentResume.projects) {
+    throw new Error("Projects section is not available for rewrite.");
+  }
+  const project = currentResume.projects[target.entryIndex];
+  if (!project) {
+    throw new Error(`Project entry index ${target.entryIndex} is out of bounds.`);
+  }
+  return { entry: project, minBulletCount: 1, maxBulletCount: 3 };
+}
+
+function sanitizeBulletList(bullets: Array<{ text: string }>): Array<{ text: string }> {
+  return bullets
+    .map((bullet) => ({ text: sanitizeBulletText(String(bullet.text ?? "")) }))
+    .filter((bullet) => bullet.text.length > 0);
+}
+
+export function applyBulletCountPolicy(args: {
+  generatedBullets: Array<{ text: string }>;
+  fallbackBullets: Array<{ text: string }>;
+  bulletCountPolicy: RewriteBulletCountPolicy;
+  minBulletCount: number;
+  maxBulletCount: number;
+}): Array<{ text: string }> {
+  const fallback = sanitizeBulletList(args.fallbackBullets);
+  const generated = sanitizeBulletList(args.generatedBullets);
+  if (fallback.length === 0) {
+    return generated;
+  }
+
+  if (args.bulletCountPolicy === "fixed") {
+    if (generated.length !== fallback.length) {
+      return fallback;
+    }
+    return generated;
+  }
+
+  const currentCount = fallback.length;
+  const minAllowed = Math.max(args.minBulletCount, currentCount - 1);
+  const maxAllowed = Math.min(args.maxBulletCount, currentCount + 1);
+  if (generated.length < minAllowed || generated.length > maxAllowed) {
+    return fallback;
+  }
+  return generated;
+}
+
+export function computeChangedBulletIndexes(
+  previous: Array<{ text: string }>,
+  next: Array<{ text: string }>
+): number[] {
+  const count = Math.max(previous.length, next.length);
+  const changed: number[] = [];
+  for (let i = 0; i < count; i += 1) {
+    const prevText = sanitizeBulletText(String(previous[i]?.text ?? ""));
+    const nextText = sanitizeBulletText(String(next[i]?.text ?? ""));
+    if (prevText !== nextText) {
+      changed.push(i);
+    }
+  }
+  return changed;
+}
+
+function collectRewriteWarnings(args: {
+  bullets: Array<{ text: string }>;
+  target: RewriteTarget;
+  changedBulletIndexes: number[];
+  requestedTechnology?: string;
+}): string[] {
+  const warnings = new Set<string>();
+  const combinedText = args.bullets.map((bullet) => bullet.text).join(" ");
+  const missingImpact = args.bullets.filter((bullet) => !hasImpactSignal(bullet.text)).length;
+
+  if (missingImpact > Math.floor(args.bullets.length / 2)) {
+    warnings.add("Several bullets still lack quantifiable impact.");
+  }
+
+  for (const bullet of args.bullets) {
+    if (IMPROBABLE_SCOPE_PATTERNS.some((pattern) => pattern.test(bullet.text))) {
+      warnings.add("Some claims may read as high scope for the role. Review for realism.");
+      break;
+    }
+  }
+
+  const requestedTechnology = sanitizeText(args.requestedTechnology ?? "");
+  if (!isNullLike(requestedTechnology) && !includesTerm(combinedText, requestedTechnology)) {
+    warnings.add(`Requested technology "${requestedTechnology}" was not clearly integrated.`);
+  }
+
+  if (
+    args.target.scope === "bullet" &&
+    args.target.bulletIndex != null &&
+    !args.changedBulletIndexes.includes(args.target.bulletIndex)
+  ) {
+    warnings.add("Focused bullet changed minimally. Retry with more specific feedback if needed.");
+  }
+
+  return Array.from(warnings);
+}
+
+export async function rewriteEntryWithFeedback(args: {
+  parsed: ParsedResume;
+  currentResume: TailoredResume;
+  jdText: string;
+  target: RewriteTarget;
+  feedback: RewriteFeedback;
+  bulletCountPolicy: RewriteBulletCountPolicy;
+  logger?:
+    | Logger
+    | {
+        info: (event: string, meta?: Record<string, unknown>) => void;
+      };
+}): Promise<RewriteResponse> {
+  const activeLogger =
+    args.logger && "child" in args.logger
+      ? args.logger.child({ component: "gemini_rewrite_entry" })
+      : args.logger ?? createLogger({ component: "gemini_rewrite_entry" });
+  const target = RewriteTargetSchema.parse(args.target);
+  const feedback = RewriteFeedbackSchema.parse(args.feedback);
+  const bulletCountPolicy = RewriteBulletCountPolicySchema.parse(args.bulletCountPolicy);
+
+  const { entry, minBulletCount, maxBulletCount } = getRewriteEntryContext(
+    args.currentResume,
+    target
+  );
+  const currentBullets = sanitizeBulletList(entry.bullets);
+
+  if (target.scope === "bullet") {
+    const bulletIndex = target.bulletIndex ?? -1;
+    if (bulletIndex < 0 || bulletIndex >= currentBullets.length) {
+      throw new Error(`Bullet index ${bulletIndex} is out of range.`);
+    }
+  }
+
+  activeLogger.info("gemini.rewrite.start", {
+    section: target.section,
+    scope: target.scope,
+    entryIndex: target.entryIndex,
+    bulletIndex: target.bulletIndex ?? null,
+    selected: bulletCountPolicy,
+    intentsCount: feedback.intents.length,
+    hasUserNote: Boolean(feedback.note?.trim()),
+    hasRequestedTechnology: Boolean(feedback.requestedTechnology?.trim()),
+    currentBulletCount: currentBullets.length,
+  });
+
+  const response = await ai.models.generateContent({
+    model: TAILOR_MODEL,
+    contents: buildRewritePrompt({
+      section: target.section,
+      target,
+      entry,
+      jdText: args.jdText,
+      feedback,
+      bulletCountPolicy,
+      minBulletCount,
+      maxBulletCount,
+    }),
+    config: {
+      systemInstruction: REWRITE_SYSTEM_PROMPT,
+      responseMimeType: "application/json",
+      responseSchema: roleTailorResponseSchema,
+      temperature: 0.65,
+      topP: 0.9,
+      maxOutputTokens: 4096,
+    },
+  });
+
+  const text = response.text;
+  if (!text) {
+    throw new Error("Gemini returned an empty rewrite response.");
+  }
+
+  const parsedResponse = JSON.parse(text) as { bullets: Array<{ text: string }> };
+  const normalizedBullets = applyBulletCountPolicy({
+    generatedBullets: parsedResponse.bullets ?? [],
+    fallbackBullets: currentBullets,
+    bulletCountPolicy,
+    minBulletCount,
+    maxBulletCount,
+  });
+  const changedBulletIndexes = computeChangedBulletIndexes(currentBullets, normalizedBullets);
+  const warnings = collectRewriteWarnings({
+    bullets: normalizedBullets,
+    target,
+    changedBulletIndexes,
+    requestedTechnology: feedback.requestedTechnology,
+  });
+
+  const result = RewriteResponseSchema.parse({
+    suggestion: {
+      section: target.section,
+      entryIndex: target.entryIndex,
+      scope: target.scope,
+      bulletIndex: target.bulletIndex,
+      bullets: normalizedBullets,
+    },
+    changedBulletIndexes,
+    warnings,
+  });
+
+  activeLogger.info("gemini.rewrite.done", {
+    section: target.section,
+    scope: target.scope,
+    entryIndex: target.entryIndex,
+    changedBulletsCount: result.changedBulletIndexes.length,
+    warningCount: result.warnings.length,
+    outputBulletCount: result.suggestion.bullets.length,
+  });
+
+  return result;
 }

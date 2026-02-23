@@ -109,6 +109,82 @@ export const ParsedResumeSchema = TailoredResumeSchema.extend({
 
 export type ParsedResume = z.infer<typeof ParsedResumeSchema>;
 
+export const RewriteIntentSchema = z.enum([
+  "give_me_something_else",
+  "improve_writing",
+  "stronger_impact",
+  "add_technology",
+  "make_it_concise",
+]);
+
+export const RewriteScopeSchema = z.enum(["bullet", "entry"]);
+export const RewriteSectionSchema = z.enum(["experience", "projects"]);
+
+export const RewriteTargetSchema = z
+  .object({
+    section: RewriteSectionSchema,
+    scope: RewriteScopeSchema,
+    entryIndex: z.number().int().min(0),
+    bulletIndex: z.number().int().min(0).optional(),
+  })
+  .superRefine((value, ctx) => {
+    if (value.scope === "bullet" && value.bulletIndex == null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["bulletIndex"],
+        message: "bulletIndex is required when scope is bullet.",
+      });
+    }
+    if (value.scope === "entry" && value.bulletIndex != null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["bulletIndex"],
+        message: "bulletIndex is not allowed when scope is entry.",
+      });
+    }
+  });
+
+export const RewriteFeedbackSchema = z.object({
+  intents: z.array(RewriteIntentSchema).max(5),
+  note: z.string().max(1200).optional(),
+  requestedTechnology: z.string().max(80).optional(),
+});
+
+export const RewriteBulletCountPolicySchema = z.enum(["fixed", "allow_plus_minus_one"]);
+
+export const RewriteRequestSchema = z.object({
+  parsed: ParsedResumeSchema,
+  currentResume: ParsedResumeSchema,
+  jdText: z.string().min(1).max(15000),
+  target: RewriteTargetSchema,
+  feedback: RewriteFeedbackSchema,
+  bulletCountPolicy: RewriteBulletCountPolicySchema,
+});
+
+export const RewriteSuggestionSchema = z.object({
+  section: RewriteSectionSchema,
+  entryIndex: z.number().int().min(0),
+  scope: RewriteScopeSchema,
+  bulletIndex: z.number().int().min(0).optional(),
+  bullets: z.array(BulletPointSchema).min(1).max(10),
+});
+
+export const RewriteResponseSchema = z.object({
+  suggestion: RewriteSuggestionSchema,
+  changedBulletIndexes: z.array(z.number().int().min(0)),
+  warnings: z.array(z.string()),
+});
+
+export type RewriteIntent = z.infer<typeof RewriteIntentSchema>;
+export type RewriteScope = z.infer<typeof RewriteScopeSchema>;
+export type RewriteSection = z.infer<typeof RewriteSectionSchema>;
+export type RewriteTarget = z.infer<typeof RewriteTargetSchema>;
+export type RewriteFeedback = z.infer<typeof RewriteFeedbackSchema>;
+export type RewriteBulletCountPolicy = z.infer<typeof RewriteBulletCountPolicySchema>;
+export type RewriteRequest = z.infer<typeof RewriteRequestSchema>;
+export type RewriteSuggestion = z.infer<typeof RewriteSuggestionSchema>;
+export type RewriteResponse = z.infer<typeof RewriteResponseSchema>;
+
 export const TailorReviewSchema = z.object({
   approved: z.boolean(),
   score: z.number().min(0).max(100),

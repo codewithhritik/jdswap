@@ -85,7 +85,8 @@ function buildParagraphStyle(
 ): CanonicalPlannedParagraphStyle {
   const opts = getCanonicalParagraphStyleOptions(paragraph.style);
   const fontSize = fontSizeFromHalfPoints(opts.fontSizeHalfPoints);
-  const lineHeight = Math.max(12, fontSize * 1.24);
+  const lineHeightMultiple = opts.lineHeightMultiple ?? 1.24;
+  const lineHeight = fontSize * lineHeightMultiple;
   const indentLeft = twipsToPoints(opts.indentLeft);
   const hanging = twipsToPoints(opts.hanging);
   const maxWidth = Math.max(MIN_LINE_WIDTH, CONTENT_WIDTH - indentLeft);

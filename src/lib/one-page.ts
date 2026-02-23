@@ -6,6 +6,7 @@ import {
 } from "./schema";
 import { buildRenderSections } from "./resume-layout";
 import {
+  compactSkillsForExport,
   normalizeSkillLines,
   removeOneSkillItemAtsPriority,
   reapplySkillTrimOperation,
@@ -61,7 +62,9 @@ export function estimateResumeLines(
   lines += 2; // name + contact row
 
   const sections = buildRenderSections(resume, sourceLayout);
-  const normalizedSkills = normalizeSkillLines(resume.skills);
+  const normalizedSkills = compactSkillsForExport(
+    normalizeSkillLines(resume.skills)
+  );
 
   for (const section of sections) {
     lines += 1; // section heading
@@ -78,8 +81,15 @@ export function estimateResumeLines(
         break;
       }
       case "skills": {
+        const fallbackSkills = compactSkillsForExport(
+          normalizeSkillLines(section.sourceLines)
+        );
         const skillsLines =
-          normalizedSkills.length > 0 ? normalizedSkills : section.sourceLines;
+          normalizedSkills.length > 0
+            ? normalizedSkills
+            : fallbackSkills.length > 0
+              ? fallbackSkills
+              : section.sourceLines;
         for (const line of skillsLines) {
           lines += estimateWrappedLines(line);
         }
