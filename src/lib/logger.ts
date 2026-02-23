@@ -41,6 +41,8 @@ const BLOCKED_KEYS = new Set([
   "bullets",
   "skills",
   "feedback",
+  "note",
+  "requestedtechnology",
   "replacements",
   "old",
   "new",

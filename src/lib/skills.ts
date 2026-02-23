@@ -29,6 +29,16 @@ interface ParsedSkillCategory {
   items: string[];
 }
 
+type ExportSkillCategoryKey =
+  | "languages"
+  | "frameworks"
+  | "cloud"
+  | "databases"
+  | "tools"
+  | "methods"
+  | "domain"
+  | "other";
+
 export interface SkillTrimOperation {
   type: "item" | "line";
   lineIndex: number;
@@ -86,6 +96,220 @@ function resolveCategoryPriorityKey(label: string): (typeof ATS_SKILL_TRIM_ORDER
   if (normalized.includes("method")) return "methods";
   if (normalized.includes("other")) return "other";
   return "other";
+}
+
+function normalizeExportCategoryBucket(label: string): string {
+  return label.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function resolveExportCategoryKey(label: string): ExportSkillCategoryKey {
+  const normalized = normalizeCategoryLabel(label);
+  if (normalized.includes("language")) return "languages";
+  if (normalized.includes("framework")) return "frameworks";
+  if (normalized.includes("cloud")) return "cloud";
+  if (normalized.includes("database") || normalized.includes("data")) return "databases";
+  if (normalized.includes("tool")) return "tools";
+  if (normalized.includes("method")) return "methods";
+  if (normalized.includes("domain")) return "domain";
+  if (normalized.includes("other")) return "other";
+  return "other";
+}
+
+const EXPORT_LINE_CHAR_BUDGET = 105;
+const EXPORT_UNCATEGORIZED_LINE_LIMIT = 2;
+
+const EXPORT_CATEGORY_ITEM_CAP: Record<ExportSkillCategoryKey, number> = {
+  languages: 6,
+  frameworks: 6,
+  cloud: 5,
+  databases: 4,
+  tools: 6,
+  methods: 4,
+  domain: 3,
+  other: 3,
+};
+
+const EXPORT_CATEGORY_MIN_ITEMS: Record<ExportSkillCategoryKey, number> = {
+  languages: 2,
+  frameworks: 2,
+  cloud: 1,
+  databases: 1,
+  tools: 1,
+  methods: 1,
+  domain: 1,
+  other: 1,
+};
+
+const LOW_SIGNAL_METHOD_OTHER_TERMS = new Set([
+  "agile",
+  "agile development",
+  "scrum",
+  "kanban",
+  "code review",
+  "code reviews",
+  "design patterns",
+  "documentation",
+  "collaboration",
+  "communication",
+  "cross functional collaboration",
+  "problem solving",
+  "teamwork",
+  "leadership",
+  "mentorship",
+  "mentoring",
+  "ownership",
+  "stakeholder management",
+  "vibe coding",
+]);
+
+const HIGH_SIGNAL_TECH_HINT =
+  /[#/+.]|\d|\b(api|apis|graphql|grpc|ci\/cd|kubernetes|docker|terraform|aws|gcp|azure|react|next\.js|node\.js|spring|sql|nosql|redis|mongodb|postgresql|mysql|linux|unix|html|css|scss|tailwind|typescript|javascript|python|java|go|rust|c\+\+|c#|flask|django|fastapi|kafka|spark|airflow|dbt|s3|ec2|lambda|rds|eks|oauth|rbac|microservices|rest)\b/i;
+
+interface ExportSkillCategory {
+  label: string;
+  key: ExportSkillCategoryKey;
+  items: string[];
+  seenItems: Set<string>;
+}
+
+function isHighSignalSkillToken(value: string): boolean {
+  return HIGH_SIGNAL_TECH_HINT.test(value);
+}
+
+function isLowSignalMethodOrOther(value: string): boolean {
+  const normalized = normalizeSpace(value).toLowerCase();
+  if (!normalized) return true;
+  if (isHighSignalSkillToken(normalized)) return false;
+  return LOW_SIGNAL_METHOD_OTHER_TERMS.has(normalized);
+}
+
+function selectItemsByCategoryPriority(
+  key: ExportSkillCategoryKey,
+  items: string[],
+  cap: number
+): string[] {
+  if (items.length <= cap) return [...items];
+  if (key !== "methods" && key !== "other") return items.slice(0, cap);
+
+  const selectedIndices = new Set<number>();
+  for (let i = 0; i < items.length && selectedIndices.size < cap; i += 1) {
+    if (!isLowSignalMethodOrOther(items[i]!)) selectedIndices.add(i);
+  }
+
+  for (let i = 0; i < items.length && selectedIndices.size < cap; i += 1) {
+    selectedIndices.add(i);
+  }
+
+  return Array.from(selectedIndices)
+    .sort((a, b) => a - b)
+    .map((index) => items[index]!)
+    .slice(0, cap);
+}
+
+function clampItemsToLineBudget(
+  label: string,
+  items: string[],
+  minItems: number,
+  budget: number
+): string[] {
+  if (items.length === 0) return [];
+
+  const required = Math.max(1, Math.min(minItems, items.length));
+  const kept = items.slice(0, required);
+
+  for (let i = required; i < items.length; i += 1) {
+    const nextItem = items[i]!;
+    const candidate = [...kept, nextItem];
+    const line = `${label}: ${candidate.join(", ")}`;
+    if (line.length > budget) break;
+    kept.push(nextItem);
+  }
+
+  return kept;
+}
+
+function upsertCategory(
+  categories: Map<string, ExportSkillCategory>,
+  orderedKeys: string[],
+  category: ParsedSkillCategory
+): ExportSkillCategory {
+  const normalizedLabel = normalizeExportCategoryBucket(category.label);
+  const existing = categories.get(normalizedLabel);
+  if (existing) return existing;
+
+  const created: ExportSkillCategory = {
+    label: category.label,
+    key: resolveExportCategoryKey(category.label),
+    items: [],
+    seenItems: new Set<string>(),
+  };
+  categories.set(normalizedLabel, created);
+  orderedKeys.push(normalizedLabel);
+  return created;
+}
+
+export function compactSkillsForExport(skillLines: string[]): string[] {
+  const normalized = normalizeSkillLines(skillLines).map(normalizeSpace).filter(Boolean);
+  if (normalized.length === 0) return [];
+
+  const categories = new Map<string, ExportSkillCategory>();
+  const orderedCategoryKeys: string[] = [];
+  const uncategorized: string[] = [];
+  const seenUncategorized = new Set<string>();
+
+  for (const line of normalized) {
+    const parsed = parseCategory(line);
+    if (!parsed) {
+      const key = line.toLowerCase();
+      if (!seenUncategorized.has(key)) {
+        uncategorized.push(line);
+        seenUncategorized.add(key);
+      }
+      continue;
+    }
+
+    const target = upsertCategory(categories, orderedCategoryKeys, parsed);
+    for (const item of parsed.items) {
+      const cleaned = normalizeSpace(item);
+      if (!cleaned) continue;
+      const dedupeKey = cleaned.toLowerCase();
+      if (target.seenItems.has(dedupeKey)) continue;
+      target.items.push(cleaned);
+      target.seenItems.add(dedupeKey);
+    }
+  }
+
+  const compacted: string[] = [];
+  for (const key of orderedCategoryKeys) {
+    const category = categories.get(key);
+    if (!category || category.items.length === 0) continue;
+
+    const minItems = Math.min(
+      category.items.length,
+      EXPORT_CATEGORY_MIN_ITEMS[category.key] ?? 1
+    );
+    const cap = Math.max(
+      minItems,
+      Math.min(category.items.length, EXPORT_CATEGORY_ITEM_CAP[category.key] ?? 3)
+    );
+    const prioritizedItems = selectItemsByCategoryPriority(
+      category.key,
+      category.items,
+      cap
+    );
+    const lineItems = clampItemsToLineBudget(
+      category.label,
+      prioritizedItems,
+      minItems,
+      EXPORT_LINE_CHAR_BUDGET
+    );
+    if (lineItems.length === 0) continue;
+    compacted.push(formatCategory({ label: category.label, items: lineItems }));
+  }
+
+  return compacted.concat(
+    uncategorized.slice(0, EXPORT_UNCATEGORIZED_LINE_LIMIT)
+  );
 }
 
 export function removeOneSkillItemAtsPriority(

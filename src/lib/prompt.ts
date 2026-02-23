@@ -1,4 +1,12 @@
-import type { ParsedResume } from "./schema";
+import type {
+  ParsedResume,
+  RewriteBulletCountPolicy,
+  RewriteFeedback,
+  RewriteSection,
+  RewriteTarget,
+  TailoredResume,
+} from "./schema";
+import { buildIntentInstructions } from "./rewrite-feedback";
 
 // ---------------------------------------------------------------------------
 // Step 1 — faithful extraction (temperature 0.1, deterministic)
@@ -170,6 +178,17 @@ Set approved=true only if the tailored resume clearly matches the JD with recrui
 Use direct, concrete feedback suitable for a second-pass rewrite.
 Keep feedback under 1200 characters.`;
 
+export const REWRITE_SYSTEM_PROMPT = `You are rewriting an already tailored resume entry based on user feedback.
+
+Return valid JSON only. Keep rewriting grounded in the original role context.
+
+Rules:
+1. Preserve factual context (company/system/outcome) and avoid invented scenarios.
+2. Follow requested feedback intents and custom note.
+3. If the user requests a technology explicitly, include it when possible and treat unsupported fit as a warning-level concern, not a blocker.
+4. Keep bullets specific, concise, and outcome-focused.
+5. Output shape must be {"bullets":[{"text":"..."}]}.`;
+
 export function buildTailorPrompt(
   parsed: ParsedResume,
   jdText: string,
@@ -218,4 +237,69 @@ ${tailored}
 - Evaluate JD alignment and recruiter readability.
 - Focus on required skills coverage in bullets, especially first bullet of each role.
 - Return structured review JSON only.`;
+}
+
+function formatRewriteBulletPolicy(
+  policy: RewriteBulletCountPolicy,
+  currentCount: number,
+  minCount: number,
+  maxCount: number
+): string {
+  if (policy === "fixed") {
+    return `Bullet count policy: fixed. Return exactly ${currentCount} bullets.`;
+  }
+  return `Bullet count policy: flexible. You may change bullet count by at most +/-1 from ${currentCount}, clamped to ${minCount}-${maxCount}.`;
+}
+
+export function buildRewritePrompt(args: {
+  section: RewriteSection;
+  target: RewriteTarget;
+  entry: TailoredResume["experience"][number] | NonNullable<TailoredResume["projects"]>[number];
+  jdText: string;
+  feedback: RewriteFeedback;
+  bulletCountPolicy: RewriteBulletCountPolicy;
+  minBulletCount: number;
+  maxBulletCount: number;
+}): string {
+  const currentCount = args.entry.bullets.length;
+  const intentInstructions = buildIntentInstructions(args.feedback.intents);
+  const focused =
+    args.target.scope === "bullet" && typeof args.target.bulletIndex === "number"
+      ? `Focused bullet index: ${args.target.bulletIndex}.`
+      : "Focused mode: entry-level rewrite.";
+  const feedbackNote = args.feedback.note?.trim() || "No additional note.";
+  const requestedTechnology = args.feedback.requestedTechnology?.trim() || "None requested.";
+  const intents = args.feedback.intents.length > 0 ? args.feedback.intents.join(", ") : "none";
+
+  return `Rewrite resume bullets for a single ${args.section} entry.
+
+## Target
+Scope: ${args.target.scope}
+Entry index: ${args.target.entryIndex}
+${focused}
+${formatRewriteBulletPolicy(args.bulletCountPolicy, currentCount, args.minBulletCount, args.maxBulletCount)}
+
+## Job Description
+\`\`\`
+${args.jdText}
+\`\`\`
+
+## Current Entry JSON
+\`\`\`json
+${JSON.stringify(args.entry, null, 2)}
+\`\`\`
+
+## Rewrite Feedback
+Intents: ${intents}
+Feedback note: ${feedbackNote}
+Requested technology: ${requestedTechnology}
+Intent instructions:
+${intentInstructions.length ? intentInstructions.map((item, index) => `${index + 1}. ${item}`).join("\n") : "None"}
+
+## Rules
+1. Keep company/title/context truthful. Do not invent unrelated projects.
+2. Keep each bullet 160-220 characters when possible; avoid fluff and cliches.
+3. Use concrete verbs and quantified impact where possible.
+4. Integrate requested technology naturally when requested by user.
+5. Return valid JSON with this shape: {"bullets":[{"text":"..."}]} and no extra keys.`;
 }

@@ -190,17 +190,18 @@ test("generated DOCX renders skills in single column with bold labels", async ()
   const { rawText, documentXml } = await extractDocxArtifacts(res);
   assert.doesNotMatch(documentXml, /<w:tabs><w:tab/);
   assert.doesNotMatch(documentXml, /<w:tab\/>/);
+  assert.match(documentXml, /w:line="269"/);
   assert.match(
     documentXml,
-    /<w:rPr><w:b\/><w:sz w:val="21"\/><w:szCs w:val="21"\/><\/w:rPr><w:t xml:space="preserve">Languages:<\/w:t>/
+    /<w:rPr><w:b\/><w:sz w:val="20"\/><w:szCs w:val="20"\/><\/w:rPr><w:t xml:space="preserve">Languages:<\/w:t>/
   );
   assert.match(
     documentXml,
-    /<w:rPr><w:b\/><w:sz w:val="21"\/><w:szCs w:val="21"\/><\/w:rPr><w:t xml:space="preserve">Frameworks:<\/w:t>/
+    /<w:rPr><w:b\/><w:sz w:val="20"\/><w:szCs w:val="20"\/><\/w:rPr><w:t xml:space="preserve">Frameworks:<\/w:t>/
   );
   assert.match(rawText, /Languages: Go, Python, TypeScript, JavaScript, Java, C\+\+/);
   assert.match(rawText, /Frameworks: React, Redux, Node\.js, Next\.js, Spring Boot, Flask/);
-  assert.match(rawText, /Cloud\/AWS: ECS, DynamoDB, Lambda, SQS, EC2, S3, RDS/);
+  assert.match(rawText, /Cloud\/AWS: ECS, DynamoDB, Lambda, SQS, EC2/);
   assert.match(rawText, /Tools: Docker, Kubernetes, Terraform, Kafka, CI\/CD, GitHub Actions/);
 });
 
@@ -227,11 +228,12 @@ test("skills lines stay single-column even when long", async () => {
   const { rawText, documentXml } = await extractDocxArtifacts(res);
   assert.doesNotMatch(documentXml, /<w:tab\/>/);
   assert.doesNotMatch(documentXml, /<w:tabs><w:tab/);
-  assert.match(rawText, /Cloud: AWS, Lambda, DynamoDB, Kubernetes, Terraform, Docker/);
+  assert.match(rawText, /Cloud: AWS, Lambda, DynamoDB, Kubernetes, Terraform/);
+  assert.doesNotMatch(rawText, /Cloud: AWS, Lambda, DynamoDB, Kubernetes, Terraform, Docker/);
   assert.match(rawText, /Tools: Git, Linux, CI\/CD/);
 });
 
-test("long skill sections are preserved in multi-page DOCX output", async () => {
+test("long skill sections are compacted while preserving section structure", async () => {
   const post = getPostHandler();
   const payload = buildBasePayload();
   const longSkills = [
@@ -309,10 +311,11 @@ test("long skill sections are preserved in multi-page DOCX output", async () => 
   const { rawText } = await extractDocxArtifacts(res);
   const bulletCount = (rawText.match(/•/g) ?? []).length;
   assert.equal(bulletCount, 5);
-  assert.match(rawText, /z-last-skill/);
+  assert.match(rawText, /Category12: skill01, skill02, skill03/);
+  assert.doesNotMatch(rawText, /z-last-skill/);
 });
 
-test("long sections keep project and skill tail content in multi-page DOCX output", async () => {
+test("long sections keep projects while compacting oversized skill tails", async () => {
   const post = getPostHandler();
   const payload = buildBasePayload();
   const denseSkillTail = Array.from({ length: 120 }, (_, idx) => `skill${idx + 1}`).join(", ");
@@ -352,7 +355,8 @@ test("long sections keep project and skill tail content in multi-page DOCX outpu
   const output = await mammoth.extractRawText({ buffer });
   assert.match(output.value, /PROJECT EXPERIENCE/i);
   assert.match(output.value, /Project Alpha/);
-  assert.match(output.value, /z-project-preserve-tail/);
+  assert.match(output.value, /Other: REST APIs, skill1, skill2/);
+  assert.doesNotMatch(output.value, /z-project-preserve-tail/);
 });
 
 test("DOCX route keeps working when render-check is enabled", async () => {

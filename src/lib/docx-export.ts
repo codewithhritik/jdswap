@@ -50,6 +50,11 @@ function paragraphXml(planned: CanonicalPlannedParagraph): string {
   const spacingAttrs: string[] = [];
   if (typeof opts.spacingBefore === "number") spacingAttrs.push(`w:before="${opts.spacingBefore}"`);
   if (typeof opts.spacingAfter === "number") spacingAttrs.push(`w:after="${opts.spacingAfter}"`);
+  if (typeof opts.lineHeightMultiple === "number") {
+    const lineValue = Math.max(1, Math.round(opts.lineHeightMultiple * 240));
+    spacingAttrs.push(`w:line="${lineValue}"`);
+    spacingAttrs.push('w:lineRule="auto"');
+  }
   if (spacingAttrs.length > 0) pPr.push(`<w:spacing ${spacingAttrs.join(" ")}/>`);
 
   if (typeof opts.indentLeft === "number" || typeof opts.hanging === "number") {
@@ -68,25 +73,41 @@ function paragraphXml(planned: CanonicalPlannedParagraph): string {
   const pPrXml = pPr.length > 0 ? `<w:pPr>${pPr.join("")}</w:pPr>` : "";
   const contentParts: string[] = [];
 
-  for (const line of planned.lines) {
-    if (line.breakBefore === "page") {
-      contentParts.push(breakRunXml("page"));
-    } else if (line.breakBefore === "line") {
-      contentParts.push(breakRunXml("line"));
-    }
+  if (planned.paragraph.semanticRole === "skillsLine") {
+    for (const line of planned.lines) {
+      if (line.breakBefore === "page") {
+        contentParts.push(breakRunXml("page"));
+      } else if (line.breakBefore === "line") {
+        contentParts.push(breakRunXml("line"));
+      }
 
-    if (planned.paragraph.semanticRole === "skillsLine") {
       if (line.skillsLabel) {
         contentParts.push(runXml(line.skillsLabel, { ...opts, bold: true }));
       }
       if (line.text || !line.skillsLabel) {
         contentParts.push(runXml(line.text, opts));
       }
-      continue;
+    }
+  } else {
+    let lineSegment = "";
+    const flushLineSegment = () => {
+      if (!lineSegment) return;
+      contentParts.push(runXml(lineSegment, opts));
+      lineSegment = "";
+    };
+
+    for (const line of planned.lines) {
+      if (line.breakBefore === "page") {
+        flushLineSegment();
+        contentParts.push(breakRunXml("page"));
+      }
+
+      const lineText = line.bulletMarker ? `\u2022 ${line.text}` : line.text;
+      if (!lineText) continue;
+      lineSegment = lineSegment ? `${lineSegment} ${lineText}` : lineText;
     }
 
-    const lineText = line.bulletMarker ? `\u2022 ${line.text}` : line.text;
-    contentParts.push(runXml(lineText, opts));
+    flushLineSegment();
   }
 
   if (contentParts.length === 0) {
