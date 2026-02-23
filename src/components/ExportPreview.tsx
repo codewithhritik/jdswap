@@ -2,6 +2,8 @@
 
 import dynamic from "next/dynamic";
 import { useMemo, useState } from "react";
+import { LiveEditablePreview } from "@/components/LiveEditablePreview";
+import type { SourceLayout, TailoredResume } from "@/lib/schema";
 
 const PdfExactPreview = dynamic(
   () => import("@/components/PdfExactPreview").then((mod) => mod.PdfExactPreview),
@@ -22,9 +24,12 @@ const DocxArtifactPreview = dynamic(
   }
 );
 
-type PreviewTab = "pdf" | "docx";
+type PreviewTab = "live" | "pdf" | "docx";
 
 interface ExportPreviewProps {
+  resume: TailoredResume;
+  sourceLayout: SourceLayout;
+  onResumeChange: (resume: TailoredResume) => void;
   pdfBlob: Blob | null;
   docxBlob: Blob | null;
   revision: string | null;
@@ -36,6 +41,9 @@ interface ExportPreviewProps {
 }
 
 export function ExportPreview({
+  resume,
+  sourceLayout,
+  onResumeChange,
   pdfBlob,
   docxBlob,
   revision,
@@ -45,7 +53,7 @@ export function ExportPreview({
   previewError,
   downloadError,
 }: ExportPreviewProps) {
-  const [activeTab, setActiveTab] = useState<PreviewTab>("pdf");
+  const [activeTab, setActiveTab] = useState<PreviewTab>("live");
 
   const pageCountText = useMemo(() => {
     if (!pageCount) return "Pages: --";
@@ -72,6 +80,11 @@ export function ExportPreview({
 
       <div className="mb-4 flex items-center gap-2">
         <TabButton
+          label="Live (Editable)"
+          active={activeTab === "live"}
+          onClick={() => setActiveTab("live")}
+        />
+        <TabButton
           label="PDF (Exact)"
           active={activeTab === "pdf"}
           onClick={() => setActiveTab("pdf")}
@@ -89,6 +102,11 @@ export function ExportPreview({
               : "Preview synced"}
         </div>
       </div>
+      {activeTab !== "live" && (
+        <div className="mb-3 rounded-lg border border-surface-border bg-base/10 px-3 py-2 text-xs text-warm-muted">
+          Exact previews are read-only. Edit text in the Live tab or the form.
+        </div>
+      )}
 
       {previewError && (
         <Alert color="danger" message={previewError} />
@@ -97,7 +115,13 @@ export function ExportPreview({
         <Alert color="danger" message={downloadError} />
       )}
 
-      {!pdfBlob || !docxBlob ? (
+      {activeTab === "live" ? (
+        <LiveEditablePreview
+          resume={resume}
+          sourceLayout={sourceLayout}
+          onChange={onResumeChange}
+        />
+      ) : !pdfBlob || !docxBlob ? (
         <PreviewPlaceholder label="Generating preview artifacts..." />
       ) : activeTab === "pdf" ? (
         <PdfExactPreview pdfBlob={pdfBlob} pageCountHint={pageCount} />

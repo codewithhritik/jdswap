@@ -182,6 +182,7 @@ export type ProgressStep =
   | "parsed"
   | "requirements_extracted"
   | "tailoring"
+  | "tailoring_skills"
   | "tailoring_role"
   | "reviewing"
   | "validating_role"
@@ -200,6 +201,8 @@ export interface LoadingProgress {
   projects?: number;
   keywords?: string[];
   roleIndex?: number;
+  roleCompany?: string;
+  roleTitle?: string;
   roleAttempt?: number;
   rolesTotal?: number;
   requiredTerms?: string[];

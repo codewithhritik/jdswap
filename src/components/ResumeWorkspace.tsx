@@ -1,12 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import type { TailoredResume } from "@/lib/schema";
+import type { SourceLayout, TailoredResume } from "@/lib/schema";
 import { ResumeEditor } from "@/components/ResumeEditor";
 import { ExportPreview } from "@/components/ExportPreview";
 
 interface ResumeWorkspaceProps {
   resume: TailoredResume;
+  sourceLayout: SourceLayout;
   onFormChange: (resume: TailoredResume) => void;
   pdfBlob: Blob | null;
   docxBlob: Blob | null;
@@ -22,6 +23,7 @@ type WorkspacePane = "form" | "preview";
 
 export function ResumeWorkspace({
   resume,
+  sourceLayout,
   onFormChange,
   pdfBlob,
   docxBlob,
@@ -56,6 +58,9 @@ export function ResumeWorkspace({
 
         <div className={activePane === "preview" ? "block" : "hidden md:block md:sticky md:top-6"}>
           <ExportPreview
+            resume={resume}
+            sourceLayout={sourceLayout}
+            onResumeChange={onFormChange}
             pdfBlob={pdfBlob}
             docxBlob={docxBlob}
             revision={previewRevision}

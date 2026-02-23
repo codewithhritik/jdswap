@@ -28,7 +28,7 @@ export function DocxArtifactPreview({ docxBlob }: DocxArtifactPreviewProps) {
           inWrapper: true,
           ignoreWidth: false,
           ignoreHeight: false,
-          className: "jdswap-docx-render",
+          className: "jdswap-docx",
           breakPages: true,
         });
       } catch {
@@ -46,6 +46,9 @@ export function DocxArtifactPreview({ docxBlob }: DocxArtifactPreviewProps) {
 
   return (
     <div className="space-y-3">
+      <div className="rounded-lg border border-surface-border bg-base/10 px-3 py-2 text-xs text-warm-muted">
+        Word preview is read-only and mirrors the exact DOCX artifact.
+      </div>
       {renderError && (
         <div className="rounded-lg border border-danger/25 bg-danger/10 px-3 py-2 text-xs text-danger">
           {renderError}

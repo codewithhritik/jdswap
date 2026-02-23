@@ -836,14 +836,14 @@ export async function tailorRole(args: {
   const activeLogger = resolveLogger(args.logger).child({ component: "gemini_tailor_role" });
   const maxAttempts = args.roleIndex === 0 ? 3 : 2;
   const expectedBulletCount = getTargetRoleBulletCount(args.parsed, args.roleIndex);
+  const activeRole = args.parsed.experience[args.roleIndex]!;
 
-  let bestBullets =
-    args.parsed.experience[args.roleIndex]?.bullets.map((bullet) => ({
-      text: sanitizeBulletText(bullet.text),
-    })) ?? [];
+  let bestBullets = activeRole.bullets.map((bullet) => ({
+    text: sanitizeBulletText(bullet.text),
+  }));
   let bestValidation = validateRoleOutput({
     roleIndex: args.roleIndex,
-    role: args.parsed.experience[args.roleIndex]!,
+    role: activeRole,
     bullets: bestBullets,
     assignments: args.assignments,
     expectedBulletCount,
@@ -854,6 +854,8 @@ export async function tailorRole(args: {
     args.onProgress?.({
       step: "tailoring_role",
       roleIndex: args.roleIndex,
+      roleCompany: activeRole.company,
+      roleTitle: activeRole.title,
       roleAttempt: attempt,
       rolesTotal: args.parsed.experience.length,
     });
@@ -890,10 +892,17 @@ export async function tailorRole(args: {
       text: sanitizeBulletText(bullet.text),
     }));
 
-    args.onProgress?.({ step: "validating_role", roleIndex: args.roleIndex, roleAttempt: attempt });
+    args.onProgress?.({
+      step: "validating_role",
+      roleIndex: args.roleIndex,
+      roleCompany: activeRole.company,
+      roleTitle: activeRole.title,
+      roleAttempt: attempt,
+      rolesTotal: args.parsed.experience.length,
+    });
     const validation = validateRoleOutput({
       roleIndex: args.roleIndex,
-      role: args.parsed.experience[args.roleIndex]!,
+      role: activeRole,
       bullets: rawBullets,
       assignments: args.assignments,
       expectedBulletCount,
@@ -927,7 +936,10 @@ export async function tailorRole(args: {
       args.onProgress?.({
         step: "retrying_role",
         roleIndex: args.roleIndex,
+        roleCompany: activeRole.company,
+        roleTitle: activeRole.title,
         roleAttempt: attempt + 1,
+        rolesTotal: args.parsed.experience.length,
         missingTerms: validation.missingRequirements,
       });
       retryFeedback = [
@@ -1223,6 +1235,8 @@ export async function tailorParsedV2(
     });
     roleResults.push(result.validation);
   }
+
+  onProgress?.({ step: "tailoring_skills" });
 
   const tailoredDraft: TailoredResume = TailoredResumeSchema.parse({
     name: sanitizeText(parsed.name),

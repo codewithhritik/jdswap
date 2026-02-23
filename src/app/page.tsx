@@ -366,11 +366,12 @@ export default function Home() {
                   Your tailored draft is ready
                 </h1>
                 <p className="mt-3 text-base leading-7 text-warm-muted">
-                  Edit from the form. Preview renders the exact DOCX/PDF artifacts used for export.
+                  Edit from the form or Live preview. Exact PDF/DOCX tabs stay read-only for artifact fidelity.
                 </p>
               </header>
               <ResumeWorkspace
                 resume={editorState.resume}
+                sourceLayout={editorState.sourceLayout}
                 onFormChange={handleEditChange}
                 pdfBlob={exportPreview.pdfBlob}
                 docxBlob={exportPreview.docxBlob}

@@ -34,6 +34,7 @@ function stepIndex(steps: StepDef[], stepKey?: ProgressStep): number {
 
   const canonicalStep: ProgressStep =
     stepKey === "tailoring_role" ||
+    stepKey === "tailoring_skills" ||
     stepKey === "validating_role" ||
     stepKey === "retrying_role"
       ? "tailoring"
@@ -63,6 +64,8 @@ function getStageHint(progress: LoadingProgress | null, showReassurance: boolean
         : "Rewriting bullets to match job language while preserving factual accuracy.";
     case "tailoring_role":
       return "Tailoring bullets for the active role.";
+    case "tailoring_skills":
+      return "Editing and prioritizing the skills section for JD relevance.";
     case "validating_role":
       return "Validating role bullets for specificity and credibility.";
     case "retrying_role":
@@ -117,10 +120,39 @@ export function LoadingState({ progress }: LoadingStateProps) {
     return () => clearTimeout(timer);
   }, [progress?.step]);
 
-  const activeRoleLabel =
-    progress?.rolesTotal != null && progress.roleIndex != null
-      ? `Role ${progress.roleIndex + 1} of ${progress.rolesTotal}`
-      : null;
+  const activeTargetLabel = useMemo(() => {
+    if (!progress?.step) return null;
+
+    const isRoleStep =
+      progress.step === "tailoring_role" ||
+      progress.step === "validating_role" ||
+      progress.step === "retrying_role";
+
+    if (isRoleStep) {
+      const roleCompany = progress.roleCompany?.trim();
+      const roleTitle = progress.roleTitle?.trim();
+
+      if (roleCompany && roleTitle) {
+        return `Editing ${roleCompany} - ${roleTitle}`;
+      }
+
+      if (progress.rolesTotal != null && progress.roleIndex != null) {
+        return `Role ${progress.roleIndex + 1} of ${progress.rolesTotal}`;
+      }
+    }
+
+    if (progress.step === "tailoring_skills") {
+      return "Editing Skills section";
+    }
+
+    return null;
+  }, [
+    progress?.roleCompany,
+    progress?.roleIndex,
+    progress?.roleTitle,
+    progress?.rolesTotal,
+    progress?.step,
+  ]);
 
   const summaryItems = [
     progress?.roles != null ? { label: "Roles", value: progress.roles } : null,
@@ -156,8 +188,13 @@ export function LoadingState({ progress }: LoadingStateProps) {
             />
           ))}
         </div>
-        {activeRoleLabel && (
-          <p className="text-xs font-mono uppercase tracking-[0.12em] text-warm-muted">{activeRoleLabel}</p>
+        {activeTargetLabel && (
+          <p
+            className="max-w-[65vw] truncate text-right text-xs font-mono uppercase tracking-[0.12em] text-warm-muted sm:max-w-[340px]"
+            title={activeTargetLabel}
+          >
+            {activeTargetLabel}
+          </p>
         )}
       </div>
 

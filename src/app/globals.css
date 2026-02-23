@@ -115,19 +115,23 @@
     display: none;
   }
 
-  .jdswap-docx-render .docx-wrapper {
-    background: transparent;
+  .jdswap-docx-wrapper {
+    background: transparent !important;
     padding: 0 !important;
+    align-items: stretch !important;
   }
 
-  .jdswap-docx-render .docx {
-    background: transparent;
-  }
-
-  .jdswap-docx-render .docx > section.docx-page,
-  .jdswap-docx-render .docx > .docx-page {
+  .jdswap-docx-wrapper > section.jdswap-docx {
     margin: 0 auto 1rem !important;
     box-shadow: 0 12px 28px rgba(0, 0, 0, 0.22) !important;
+  }
+
+  .jdswap-docx-wrapper > section.jdswap-docx:last-child {
+    margin-bottom: 0 !important;
+  }
+
+  section.jdswap-docx {
+    background: white !important;
   }
 }
 
