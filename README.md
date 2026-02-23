@@ -1,6 +1,8 @@
 # jdswap
 
 A Next.js + TypeScript app for resume tailoring and export workflows.
+It provides JD-aware tailoring, canonical pagination, and exact DOCX/PDF export previews.
+Quick start: run `npm install` and `npm run dev`.
 
 ## Prerequisites
 
